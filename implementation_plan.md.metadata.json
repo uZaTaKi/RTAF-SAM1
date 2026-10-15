@@ -1,0 +1,6 @@
+{
+  "summary": "Implementation plan for RTAF SAM-1 Surface-to-Air Missile Simulator for Flight Operations Support, featuring interactive 2D vector radar scope, target manipulation, firing controls, realistic engagement physics, shot log table, and 4Hz GPX/ACMI recording.",
+  "updatedAt": "2026-10-15T09:11:37.714313471Z",
+  "requestFeedback": true,
+  "userFacing": true
+}
