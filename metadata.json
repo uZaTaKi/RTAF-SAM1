@@ -1,0 +1,6 @@
+{
+  "name": "RTAF SAM-1 - SAM Simulation System",
+  "description": "Tactical Surface-to-Air Missile simulator for flight operations support with real-time vector radar scope, target maneuvering, 3D engagement physics, and 10Hz GPX/ACMI flight telemetry recording.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
