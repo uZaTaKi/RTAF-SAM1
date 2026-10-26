@@ -8,6 +8,8 @@ import {
   formatFlightLevel,
   machToKnots,
   knotsToKmh,
+  normalizeDegree360,
+  formatDegree360,
 } from '../utils/geo';
 import {
   Compass,
@@ -51,12 +53,21 @@ export const AircraftControlWidget: React.FC<AircraftControlWidgetProps> = ({
   const dialRef = useRef<HTMLDivElement>(null);
   const [isDraggingDial, setIsDraggingDial] = useState<boolean>(false);
 
-  // Bearing, Range, and 3D Slant Range to SAM Site
-  const bearing = getBearingDeg(samConfig.baseLat, samConfig.baseLon, target.lat, target.lon);
-  const groundRangeNM = getDistanceNM(samConfig.baseLat, samConfig.baseLon, target.lat, target.lon);
+  // Bullseye active state and reference coordinates for BRA
+  const isBeActive = Boolean(
+    samConfig.bullseyeEnabled &&
+    samConfig.bullseyeLat !== undefined &&
+    samConfig.bullseyeLon !== undefined
+  );
+  const refLat = isBeActive ? samConfig.bullseyeLat! : samConfig.baseLat;
+  const refLon = isBeActive ? samConfig.bullseyeLon! : samConfig.baseLon;
+
+  // Bearing, Range, and 3D Slant Range to reference (Bullseye if active, SAM Site if not)
+  const bearing = getBearingDeg(refLat, refLon, target.lat, target.lon);
+  const groundRangeNM = getDistanceNM(refLat, refLon, target.lat, target.lon);
   const slantRangeNM = getSlantRangeNM(groundRangeNM, samConfig.baseElevationFt, target.altitudeFt);
 
-  const bbb = Math.round(bearing).toString().padStart(3, '0');
+  const bbb = formatDegree360(bearing);
   const rngFmt = Math.round(groundRangeNM).toString();
   const flFmt = formatFlightLevel(target.altitudeFt);
 
@@ -73,8 +84,7 @@ export const AircraftControlWidget: React.FC<AircraftControlWidgetProps> = ({
     const dy = e.clientY - centerY;
 
     let angleDeg = (Math.atan2(dx, -dy) * 180) / Math.PI;
-    if (angleDeg < 0) angleDeg += 360;
-    onUpdateHeading(Math.round(angleDeg) % 360);
+    onUpdateHeading(normalizeDegree360(angleDeg));
   };
 
   const handleDialPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -110,7 +120,9 @@ export const AircraftControlWidget: React.FC<AircraftControlWidgetProps> = ({
 
         <div className="flex items-center gap-2 px-2.5 py-1 rounded bg-slate-900 border border-slate-800 font-telemetry text-xs">
           <div>
-            <span className="text-slate-400 text-[10px] mr-1">POS:</span>
+            <span className="text-slate-400 text-[10px] mr-1">
+              {isBeActive ? 'POS (BE):' : 'POS:'}
+            </span>
             <span className="font-bold text-cyan-300">{bbb}/{rngFmt}</span>
           </div>
           <span className="text-slate-700">|</span>
@@ -141,45 +153,63 @@ export const AircraftControlWidget: React.FC<AircraftControlWidgetProps> = ({
             <span className="text-slate-400 font-semibold">HDG:</span>
           </div>
 
-          {/* Interactive Dial Ring */}
+          {/* Interactive Dial Ring (Increased size by 50%: 48px x 48px, perfectly centered SVG) */}
           <div
             ref={dialRef}
             onPointerDown={handleDialPointerDown}
             onPointerMove={handleDialPointerMove}
             onPointerUp={handleDialPointerUp}
-            className="relative w-8 h-8 rounded-full bg-slate-950 border border-slate-700 cursor-grab active:cursor-grabbing flex items-center justify-center touch-none shrink-0"
-            title="Drag around ring to adjust heading"
+            className="relative w-12 h-12 rounded-full bg-slate-950 border border-slate-700 hover:border-cyan-500/60 shadow-inner cursor-grab active:cursor-grabbing flex items-center justify-center touch-none shrink-0 transition-colors"
+            title="Drag around ring to adjust heading (001° - 360°)"
           >
-            <div
-              className="absolute inset-0 pointer-events-none flex items-center justify-center"
-              style={{ transform: `rotate(${target.headingDeg}deg)` }}
-            >
-              <div className="w-0.5 h-4 bg-cyan-400 rounded-full" />
-              <div className="absolute top-0.5 w-1.5 h-1.5 rounded-full bg-cyan-300 shadow-xs" />
-            </div>
+            <svg className="w-full h-full pointer-events-none select-none" viewBox="0 0 48 48">
+              {/* Outer decorative dashed track */}
+              <circle cx="24" cy="24" r="22" fill="none" stroke="#334155" strokeWidth="1" strokeDasharray="1.5 2.5" />
+
+              {/* Fixed Cardinal Marks */}
+              <circle cx="24" cy="4" r="1.5" fill="#EF4444" />
+              <circle cx="44" cy="24" r="1" fill="#64748B" />
+              <circle cx="24" cy="44" r="1" fill="#64748B" />
+              <circle cx="4" cy="24" r="1" fill="#64748B" />
+
+              {/* Rotating Pointer Needle centered exactly at (24, 24) */}
+              <g transform={`rotate(${normalizeDegree360(target.headingDeg)}, 24, 24)`}>
+                {/* Pointer tip triangle */}
+                <polygon points="24,3 20.5,10 27.5,10" fill="#67E8F9" />
+                {/* Main needle shaft */}
+                <line x1="24" y1="24" x2="24" y2="8" stroke="#22D3EE" strokeWidth="2.5" strokeLinecap="round" />
+                {/* Counterweight tail */}
+                <line x1="24" y1="24" x2="24" y2="34" stroke="#0E7490" strokeWidth="2" strokeLinecap="round" />
+              </g>
+
+              {/* Center Pivot Point strictly at (24, 24) */}
+              <circle cx="24" cy="24" r="3" fill="#22D3EE" stroke="#020617" strokeWidth="1.5" />
+            </svg>
           </div>
 
           <div className="flex items-center gap-1">
             <button
-              onClick={() => onUpdateHeading((target.headingDeg - 5 + 360) % 360)}
+              onClick={() => onUpdateHeading(normalizeDegree360(target.headingDeg - 5))}
               className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 font-telemetry"
+              title="Turn 5 degrees left"
             >
               -5°
             </button>
             <input
               type="number"
-              min={0}
-              max={359}
-              value={target.headingDeg}
+              min={1}
+              max={360}
+              value={normalizeDegree360(target.headingDeg)}
               onChange={(e) => {
                 const val = parseInt(e.target.value, 10);
-                if (!isNaN(val)) onUpdateHeading(((val % 360) + 360) % 360);
+                if (!isNaN(val)) onUpdateHeading(normalizeDegree360(val));
               }}
               className="w-12 text-center text-xs py-0.5 bg-slate-950 border border-slate-700 rounded text-cyan-300 font-telemetry font-bold"
             />
             <button
-              onClick={() => onUpdateHeading((target.headingDeg + 5) % 360)}
+              onClick={() => onUpdateHeading(normalizeDegree360(target.headingDeg + 5))}
               className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 font-telemetry"
+              title="Turn 5 degrees right"
             >
               +5°
             </button>

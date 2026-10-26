@@ -1,7 +1,7 @@
 import React from 'react';
 import { ShotLogEntry } from '../types/simulation';
 import { exportShotLogsCSV, triggerFileDownload } from '../utils/gpxExporter';
-import { getBearingDeg, getDistanceNM, getDestinationLatLon, decimalToDDMM, formatFlightLevel } from '../utils/geo';
+import { getBearingDeg, getDistanceNM, getDestinationLatLon, decimalToDDMM, formatFlightLevel, formatDegree360 } from '../utils/geo';
 import {
   FileSpreadsheet,
   FileCode,
@@ -103,9 +103,7 @@ export const ShotLogPanel: React.FC<ShotLogPanelProps> = ({ logs, onClearLogs, s
                 const isInFlight = log.result === 'IN_FLIGHT';
 
                 // 1. Initial Bearing / Range / FL
-                const initBbb = Math.round(((log.initialBearingDeg % 360) + 360) % 360)
-                  .toString()
-                  .padStart(3, '0');
+                const initBbb = formatDegree360(log.initialBearingDeg);
                 const initRng = Math.round(log.initialRangeNM).toString();
                 const initFl = formatFlightLevel(log.initialAltitudeFt);
                 const initBrgRngFlLine = `${initBbb}/${initRng}/${initFl}`;
@@ -140,7 +138,7 @@ export const ShotLogPanel: React.FC<ShotLogPanelProps> = ({ logs, onClearLogs, s
 
                 const finalBbbStr =
                   finalBrg !== undefined
-                    ? Math.round(((finalBrg % 360) + 360) % 360).toString().padStart(3, '0')
+                    ? formatDegree360(finalBrg)
                     : null;
                 const finalRngStr =
                   finalRng !== undefined ? Math.round(finalRng).toString() : null;

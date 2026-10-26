@@ -132,6 +132,22 @@ export function getBearingDeg(lat1: number, lon1: number, lat2: number, lon2: nu
 }
 
 /**
+ * Normalizes degrees to [001, 360] range (0 deg is represented as 360 deg)
+ */
+export function normalizeDegree360(deg: number): number {
+  let rounded = Math.round(deg) % 360;
+  if (rounded <= 0) rounded += 360;
+  return rounded;
+}
+
+/**
+ * Formats degree into 3-digit string strictly from "001" to "360"
+ */
+export function formatDegree360(deg: number): string {
+  return normalizeDegree360(deg).toString().padStart(3, '0');
+}
+
+/**
  * Calculates destination point given start point, bearing in degrees, and distance in Nautical Miles
  */
 export function getDestinationLatLon(

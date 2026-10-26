@@ -13,6 +13,8 @@ import {
   Trash2,
   Check,
   AlertCircle,
+  Target,
+  Plane,
 } from 'lucide-react';
 
 interface SAMParametersModalProps {
@@ -31,6 +33,12 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
   const [formData, setFormData] = useState<SAMConfig>({ ...config });
   const [latInput, setLatInput] = useState<string>(decimalToDDMM(config.baseLat, true));
   const [lonInput, setLonInput] = useState<string>(decimalToDDMM(config.baseLon, false));
+  const [beLatInput, setBeLatInput] = useState<string>(
+    decimalToDDMM(config.bullseyeLat ?? config.baseLat, true)
+  );
+  const [beLonInput, setBeLonInput] = useState<string>(
+    decimalToDDMM(config.bullseyeLon ?? config.baseLon, false)
+  );
   const [selectedPresetKey, setSelectedPresetKey] = useState<string>('ks1c');
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
@@ -43,6 +51,8 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
       setFormData({ ...preset });
       setLatInput(decimalToDDMM(preset.baseLat, true));
       setLonInput(decimalToDDMM(preset.baseLon, false));
+      setBeLatInput(decimalToDDMM(preset.bullseyeLat ?? preset.baseLat, true));
+      setBeLonInput(decimalToDDMM(preset.bullseyeLon ?? preset.baseLon, false));
       setStatusMsg(`Loaded preset: ${preset.systemName}`);
       setTimeout(() => setStatusMsg(null), 3000);
     }
@@ -53,6 +63,8 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
     setFormData({ ...DEFAULT_SAM_CONFIG });
     setLatInput(decimalToDDMM(DEFAULT_SAM_CONFIG.baseLat, true));
     setLonInput(decimalToDDMM(DEFAULT_SAM_CONFIG.baseLon, false));
+    setBeLatInput(decimalToDDMM(DEFAULT_SAM_CONFIG.bullseyeLat ?? DEFAULT_SAM_CONFIG.baseLat, true));
+    setBeLonInput(decimalToDDMM(DEFAULT_SAM_CONFIG.bullseyeLon ?? DEFAULT_SAM_CONFIG.baseLon, false));
     setStatusMsg('Reset to default system configuration.');
     setTimeout(() => setStatusMsg(null), 3000);
   };
@@ -73,6 +85,12 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
           setFormData(loaded);
           setLatInput(decimalToDDMM(loaded.baseLat, true));
           setLonInput(decimalToDDMM(loaded.baseLon, false));
+          if (loaded.bullseyeLat !== undefined) {
+            setBeLatInput(decimalToDDMM(loaded.bullseyeLat, true));
+          }
+          if (loaded.bullseyeLon !== undefined) {
+            setBeLonInput(decimalToDDMM(loaded.bullseyeLon, false));
+          }
           setStatusMsg(`Loaded config from ${file.name}`);
           setTimeout(() => setStatusMsg(null), 3000);
         }
@@ -113,19 +131,33 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Validate coordinates
+    // Validate SAM Base coordinates
     const parsedLat = parseDDMM(latInput);
     const parsedLon = parseDDMM(lonInput);
 
     if (parsedLat === null || parsedLon === null) {
-      alert("Invalid Coordinates format. Please use DD° MM.MMM' N/S/E/W (e.g. 15° 17.500' N)");
+      alert("Invalid Base Coordinates format. Please use DD° MM.MMM' N/S/E/W (e.g. 15° 17.500' N)");
       return;
+    }
+
+    // Validate Bullseye coordinates if enabled
+    const parsedBeLat = parseDDMM(beLatInput);
+    const parsedBeLon = parseDDMM(beLonInput);
+
+    if (formData.bullseyeEnabled) {
+      if (parsedBeLat === null || parsedBeLon === null) {
+        alert("Invalid Bullseye Coordinates format. Please use DD° MM.MMM' N/S/E/W (e.g. 15° 15.000' N)");
+        return;
+      }
     }
 
     const finalConfig: SAMConfig = {
       ...formData,
       baseLat: parsedLat,
       baseLon: parsedLon,
+      bullseyeEnabled: Boolean(formData.bullseyeEnabled),
+      bullseyeLat: parsedBeLat !== null ? parsedBeLat : (formData.bullseyeLat ?? parsedLat),
+      bullseyeLon: parsedBeLon !== null ? parsedBeLon : (formData.bullseyeLon ?? parsedLon),
     };
 
     onSave(finalConfig);
@@ -140,7 +172,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
           <div className="flex items-center gap-2.5">
             <Settings className="w-5 h-5 text-cyan-400" />
             <h2 className="text-base font-bold tracking-wide uppercase text-slate-100">
-              SAM SYSTEM PARAMETERS & RADAR CONFIGURATION
+              SETTING - SYSTEM CONFIGURATION & PARAMETERS
             </h2>
           </div>
           <button
@@ -206,7 +238,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
               <div>
-                <label className="block text-slate-400 mb-1">System Name / Site Designation</label>
+                <label className="block text-slate-400 mb-1 font-semibold">System Name / Site Designation</label>
                 <input
                   type="text"
                   value={formData.systemName}
@@ -216,7 +248,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
                 />
               </div>
               <div>
-                <label className="block text-slate-400 mb-1">Base Elevation (ft MSL)</label>
+                <label className="block text-slate-400 mb-1 font-semibold">Base Elevation (ft MSL)</label>
                 <input
                   type="number"
                   value={formData.baseElevationFt}
@@ -226,7 +258,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
                 />
               </div>
               <div>
-                <label className="block text-slate-400 mb-1">Latitude (DD° MM.MMM' N/S)</label>
+                <label className="block text-slate-400 mb-1 font-semibold">Base Latitude (DD° MM.MMM' N/S)</label>
                 <input
                   type="text"
                   value={latInput}
@@ -237,7 +269,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
                 />
               </div>
               <div>
-                <label className="block text-slate-400 mb-1">Longitude (DD° MM.MMM' E/W)</label>
+                <label className="block text-slate-400 mb-1 font-semibold">Base Longitude (DD° MM.MMM' E/W)</label>
                 <input
                   type="text"
                   value={lonInput}
@@ -250,10 +282,76 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
             </div>
           </div>
 
-          {/* Section 2: Launchers & Kinetic Parameters */}
+          {/* Section 2: Bullseye (B.E.) Reference Configuration */}
+          <div className="p-4 rounded-lg bg-slate-900/50 border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Target className="w-4 h-4 text-amber-400" />
+                <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">
+                  2. BULLSEYE (B.E.) REFERENCE CONFIGURATION
+                </span>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer select-none bg-slate-950 px-2.5 py-1 rounded border border-slate-800 hover:border-amber-500/50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={Boolean(formData.bullseyeEnabled)}
+                  onChange={(e) => setFormData({ ...formData, bullseyeEnabled: e.target.checked })}
+                  className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-amber-500 accent-amber-500 cursor-pointer"
+                />
+                <span className="text-xs font-bold text-amber-300">
+                  USE BULLSEYE (B.E.)
+                </span>
+              </label>
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              เมื่อเลือกใช้ B.E. ค่า BRA (Bearing/Range) ของเครื่องบินและเคอร์เซอร์จะคำนวณเทียบจากตำแหน่ง B.E. แทนตัวจรวด/แท่นยิง พร้อมแสดงสัญลักษณ์ B.E. และเส้นใยแมงมุมบอกองศาที่ตำแหน่ง B.E. (โดย Center ของแผนที่ยังคงอยู่ที่แท่นยิง)
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs pt-1">
+              <div>
+                <label className={`block mb-1 font-semibold ${formData.bullseyeEnabled ? 'text-slate-300' : 'text-slate-600'}`}>
+                  B.E. Latitude (DD° MM.MMM' N/S)
+                </label>
+                <input
+                  type="text"
+                  disabled={!formData.bullseyeEnabled}
+                  value={beLatInput}
+                  onChange={(e) => setBeLatInput(e.target.value)}
+                  placeholder="15° 15.000' N"
+                  className={`w-full px-3 py-1.5 rounded font-telemetry transition-all ${
+                    formData.bullseyeEnabled
+                      ? 'bg-slate-950 border border-amber-500/60 text-amber-300 focus:outline-hidden focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30'
+                      : 'bg-slate-900/40 border border-slate-800 text-slate-600 cursor-not-allowed select-none'
+                  }`}
+                  required={Boolean(formData.bullseyeEnabled)}
+                />
+              </div>
+              <div>
+                <label className={`block mb-1 font-semibold ${formData.bullseyeEnabled ? 'text-slate-300' : 'text-slate-600'}`}>
+                  B.E. Longitude (DD° MM.MMM' E/W)
+                </label>
+                <input
+                  type="text"
+                  disabled={!formData.bullseyeEnabled}
+                  value={beLonInput}
+                  onChange={(e) => setBeLonInput(e.target.value)}
+                  placeholder="100° 21.000' E"
+                  className={`w-full px-3 py-1.5 rounded font-telemetry transition-all ${
+                    formData.bullseyeEnabled
+                      ? 'bg-slate-950 border border-amber-500/60 text-amber-300 focus:outline-hidden focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30'
+                      : 'bg-slate-900/40 border border-slate-800 text-slate-600 cursor-not-allowed select-none'
+                  }`}
+                  required={Boolean(formData.bullseyeEnabled)}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Section 3: Launchers & Kinetic Parameters (Missile/Rocket only) */}
           <div className="p-4 rounded-lg bg-slate-900/50 border border-slate-800 space-y-3">
             <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider">
-              2. LAUNCHER MATRIX & MISSILE KINEMATICS
+              3. LAUNCHER MATRIX & MISSILE KINEMATICS
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
               <div>
@@ -356,8 +454,8 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
                   />
                 </div>
               </div>
-              <div>
-                <label className="block text-slate-400 mb-1">Max Simultaneous Shots</label>
+              <div className="col-span-2 md:col-span-2">
+                <label className="block text-slate-400 mb-1">Max Simultaneous Intercepts</label>
                 <input
                   type="number"
                   min={1}
@@ -367,8 +465,26 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
                   className="w-full px-3 py-1.5 rounded bg-slate-950 border border-slate-700 text-rose-300 font-telemetry font-bold"
                 />
               </div>
+            </div>
+          </div>
+
+          {/* Section 4: Default Target Spawn Parameters (Separated from Missile section) */}
+          <div className="p-4 rounded-lg bg-slate-900/50 border border-slate-800 space-y-3">
+            <div className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
+              <Plane className="w-4 h-4 text-emerald-400" />
+              <span>4. DEFAULT TARGET SPAWN PARAMETERS</span>
+            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              กำหนดค่าความสูงและความเร็วเริ่มต้นสำหรับเป้าหมายอากาศยานที่สร้างขึ้นมาใหม่ (+ TARGET หรือ Double-click บนจอเรดาร์)
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
               <div>
-                <label className="block text-slate-400 mb-1">Default Spawn Alt (ft)</label>
+                <label className="block text-slate-300 mb-1 font-semibold">
+                  Default Spawn Altitude (ft)
+                  <span className="text-emerald-400 font-normal ml-2 text-xs font-telemetry">
+                    (FL{Math.round((formData.defaultSpawnAltitudeFt || 20000) / 100)})
+                  </span>
+                </label>
                 <input
                   type="number"
                   step={1000}
@@ -376,13 +492,13 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
                   max={60000}
                   value={formData.defaultSpawnAltitudeFt}
                   onChange={(e) => setFormData({ ...formData, defaultSpawnAltitudeFt: parseInt(e.target.value, 10) || 20000 })}
-                  className="w-full px-3 py-1.5 rounded bg-slate-950 border border-slate-700 text-emerald-300 font-telemetry"
+                  className="w-full px-3 py-1.5 rounded bg-slate-950 border border-slate-700 text-emerald-300 font-telemetry focus:outline-hidden focus:border-emerald-500"
                 />
               </div>
               <div>
-                <label className="block text-slate-400 mb-1">
-                  Default Spawn Speed (M)
-                  <span className="text-amber-400 font-normal ml-2 text-xs">
+                <label className="block text-slate-300 mb-1 font-semibold">
+                  Default Spawn Speed (Mach)
+                  <span className="text-amber-400 font-normal ml-2 text-xs font-telemetry">
                     (≈ {Math.round((formData.defaultSpawnSpeedMach || 0.85) * 661.47)} kts)
                   </span>
                 </label>
@@ -393,17 +509,17 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
                   max={2.5}
                   value={formData.defaultSpawnSpeedMach}
                   onChange={(e) => setFormData({ ...formData, defaultSpawnSpeedMach: parseFloat(e.target.value) || 0.85 })}
-                  className="w-full px-3 py-1.5 rounded bg-slate-950 border border-slate-700 text-slate-100 font-telemetry"
+                  className="w-full px-3 py-1.5 rounded bg-slate-950 border border-slate-700 text-slate-100 font-telemetry focus:outline-hidden focus:border-amber-500"
                 />
               </div>
             </div>
           </div>
 
-          {/* Section 3: Radar Tracking Range Rings */}
+          {/* Section 5: Radar Tracking Range Rings */}
           <div className="p-4 rounded-lg bg-slate-900/50 border border-slate-800 space-y-3">
             <div className="flex items-center justify-between">
               <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider">
-                3. RADAR TRACKING RINGS & CAPABILITY ENVELOPES
+                5. RADAR TRACKING RINGS & CAPABILITY ENVELOPES
               </div>
               <button
                 type="button"

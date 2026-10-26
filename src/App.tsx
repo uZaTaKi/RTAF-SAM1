@@ -16,6 +16,8 @@ import {
   getSlantRangeNM,
   decimalToDDMM,
   MACH_TO_NM_PER_SEC,
+  normalizeDegree360,
+  formatDegree360,
 } from './utils/geo';
 import { DEFAULT_SAM_CONFIG, SAM_PRESETS } from './utils/presets';
 import {
@@ -195,7 +197,7 @@ export default function App() {
       lat,
       lon,
       altitudeFt: samConfig.defaultSpawnAltitudeFt,
-      headingDeg: Math.round(bearingToSAM),
+      headingDeg: normalizeDegree360(bearingToSAM),
       speedMach: samConfig.defaultSpawnSpeedMach,
       spawnTimeMs: Date.now(),
       isEngaged: false,
@@ -917,11 +919,8 @@ export default function App() {
             handleResetAll();
           }
         }}
-        onRecenter={() => {
-          // Trigger custom event or ref to radar
-          const ev = new CustomEvent('recenter-sam');
-          window.dispatchEvent(ev);
-        }}
+        onClearKmlOverlays={() => setTacticalOverlays([])}
+        overlayCount={tacticalOverlays.length}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onUploadKml={handleUploadKml}
         onQuickSpawnTarget={handleQuickSpawnTarget}
@@ -940,6 +939,7 @@ export default function App() {
             visualEffects={visualEffects}
             tacticalOverlays={tacticalOverlays}
             selectedTargetId={selectedTargetId}
+            layoutKey={`${isFiringPanelOpen}-${isShotLogExpanded}-${Boolean(selectedTargetId)}`}
             onSelectTarget={(id) => setSelectedTargetId(id)}
             onSpawnTarget={handleSpawnTarget}
             onUpdateTargetPosition={handleUpdateTargetPosition}
@@ -1019,7 +1019,7 @@ export default function App() {
               );
               setTargets((prev) => {
                 const updated = prev.map((t) =>
-                  t.id === selectedTarget.id ? { ...t, headingDeg: Math.round(brg) } : t
+                  t.id === selectedTarget.id ? { ...t, headingDeg: normalizeDegree360(brg) } : t
                 );
                 targetsRef.current = updated;
                 return updated;
@@ -1058,45 +1058,49 @@ export default function App() {
           </div>
         )}
 
-        {/* Shot Logging Table Tray (Collapsible) */}
+        {/* Shot Logging Table Tray (Collapsible - Slim 50% height when collapsed) */}
         <div
           onClick={() => setIsShotLogExpanded((p) => !p)}
-          className="flex items-center justify-between px-4 sm:px-6 py-2.5 bg-slate-900/95 hover:bg-slate-900 cursor-pointer border-t border-slate-800 transition-colors select-none group"
+          className={`flex items-center justify-between px-4 sm:px-6 transition-colors select-none group cursor-pointer border-t border-slate-800 ${
+            isShotLogExpanded
+              ? 'py-2 bg-slate-900/95 hover:bg-slate-900'
+              : 'py-1 bg-slate-900/90 hover:bg-slate-850'
+          }`}
         >
-          <div className="flex items-center gap-3">
-            <div className="p-1.5 rounded bg-slate-800 border border-slate-700/80 text-cyan-400">
-              <Shield className="w-4 h-4" />
+          <div className="flex items-center gap-2.5">
+            <div className={`rounded bg-slate-800 border border-slate-700/80 text-cyan-400 ${isShotLogExpanded ? 'p-1.5' : 'p-1'}`}>
+              <Shield className={isShotLogExpanded ? 'w-4 h-4' : 'w-3.5 h-3.5'} />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-xs sm:text-sm font-extrabold tracking-wider text-slate-200 uppercase">
+              <span className={`font-extrabold tracking-wider text-slate-200 uppercase ${isShotLogExpanded ? 'text-xs sm:text-sm' : 'text-[11px] sm:text-xs'}`}>
                 SHOT LOGGING TABLE & ENGAGEMENT HISTORY
               </span>
-              <span className="px-2 py-0.5 rounded-full bg-cyan-950/80 border border-cyan-500/40 text-cyan-400 text-[11px] font-telemetry font-bold">
+              <span className="px-1.5 py-0.5 rounded-full bg-cyan-950/80 border border-cyan-500/40 text-cyan-400 text-[10px] font-telemetry font-bold">
                 {shotLogs.length} {shotLogs.length === 1 ? 'SHOT' : 'SHOTS'}
               </span>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Enlarged, Prominent Expand/Collapse Button */}
+            {/* Slim, elegant Expand/Collapse Button */}
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 setIsShotLogExpanded((p) => !p);
               }}
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg font-bold text-xs sm:text-sm tracking-wider font-military transition-all cursor-pointer shadow-md ${
+              className={`flex items-center gap-1.5 rounded-md font-bold tracking-wider font-military transition-all cursor-pointer shadow-xs ${
                 isShotLogExpanded
-                  ? 'bg-slate-800 hover:bg-slate-750 text-cyan-300 border border-cyan-500/60 shadow-cyan-950/50 hover:scale-[1.02] active:scale-95'
-                  : 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black border border-cyan-300 shadow-cyan-950/60 hover:scale-[1.02] active:scale-95'
+                  ? 'px-3 py-1 text-xs bg-slate-800 hover:bg-slate-750 text-cyan-300 border border-cyan-500/60 shadow-cyan-950/50 hover:scale-[1.01] active:scale-95'
+                  : 'px-2.5 py-0.5 text-[11px] bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black border border-cyan-300 shadow-cyan-950/60 hover:scale-[1.01] active:scale-95'
               }`}
-              title={isShotLogExpanded ? 'Collapse Shot Logging Panel' : 'Expand Shot Logging Panel (2x height)'}
+              title={isShotLogExpanded ? 'Collapse Shot Logging Panel' : 'Expand Shot Logging Panel'}
             >
               <span>{isShotLogExpanded ? 'COLLAPSE LOG' : 'EXPAND LOG'}</span>
               {isShotLogExpanded ? (
-                <ChevronDown className="w-5 h-5 stroke-[2.5]" />
+                <ChevronDown className="w-3.5 h-3.5 stroke-[2.5]" />
               ) : (
-                <ChevronUp className="w-5 h-5 stroke-[2.5]" />
+                <ChevronUp className="w-3.5 h-3.5 stroke-[2.5]" />
               )}
             </button>
           </div>

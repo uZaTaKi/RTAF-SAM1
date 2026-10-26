@@ -1,5 +1,5 @@
 import { SimulationTelemetrySample, ShotLogEntry, SAMConfig } from '../types/simulation';
-import { decimalToDDMM, parseDDMM, formatFlightLevel } from './geo';
+import { decimalToDDMM, parseDDMM, formatFlightLevel, formatDegree360 } from './geo';
 
 /**
  * Builds GPX 1.1 XML specifically for Aircraft Targets.
@@ -406,12 +406,12 @@ export function exportShotLogsCSV(logs: ShotLogEntry[]): string {
   ];
 
   const rows = logs.map((l) => {
-    const initBbb = Math.round(((l.initialBearingDeg % 360) + 360) % 360).toString().padStart(3, '0');
+    const initBbb = formatDegree360(l.initialBearingDeg);
     const initRng = Math.round(l.initialRangeNM).toString();
     const initFl = formatFlightLevel(l.initialAltitudeFt);
     const initBrgRngFl = `${initBbb}/${initRng}/${initFl}`;
 
-    const bbb = l.finalBearingDeg !== undefined ? Math.round(((l.finalBearingDeg % 360) + 360) % 360).toString().padStart(3, '0') : '-';
+    const bbb = l.finalBearingDeg !== undefined ? formatDegree360(l.finalBearingDeg) : '-';
     const rng = l.finalRangeNM !== undefined ? Math.round(l.finalRangeNM).toString() : '-';
     const finalAlt = l.finalAltitudeFt ?? l.interceptAltFt;
     const finalFl = finalAlt !== undefined ? formatFlightLevel(finalAlt) : l.initialAltitudeFt !== undefined ? formatFlightLevel(l.initialAltitudeFt) : '-';

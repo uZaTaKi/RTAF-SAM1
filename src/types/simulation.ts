@@ -34,6 +34,9 @@ export interface SAMConfig {
   radarRings: RadarRing[];
   defaultSpawnAltitudeFt: number;
   defaultSpawnSpeedMach: number;
+  bullseyeEnabled?: boolean;
+  bullseyeLat?: number; // Decimal degrees
+  bullseyeLon?: number; // Decimal degrees
 }
 
 export interface AircraftTarget {

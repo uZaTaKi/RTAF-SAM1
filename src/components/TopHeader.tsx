@@ -8,7 +8,6 @@ import {
   Plus,
   Trash2,
   Clock,
-  Radio,
   FileDown,
   RotateCcw,
 } from 'lucide-react';
@@ -21,7 +20,8 @@ interface TopHeaderProps {
   onStopSim: () => void;
   onExportGpx?: () => void;
   onResetAll?: () => void;
-  onRecenter: () => void;
+  onClearKmlOverlays?: () => void;
+  overlayCount?: number;
   onOpenSettings: () => void;
   onUploadKml: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onQuickSpawnTarget: () => void;
@@ -37,7 +37,8 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
   onStopSim,
   onExportGpx,
   onResetAll,
-  onRecenter,
+  onClearKmlOverlays,
+  overlayCount = 0,
   onOpenSettings,
   onUploadKml,
   onQuickSpawnTarget,
@@ -101,16 +102,6 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
           <span className="text-slate-400">ZULU:</span>
           <span className="text-cyan-400 font-bold">{currentTime.zulu}</span>
         </div>
-
-        {isSimRunning && (
-          <>
-            <div className="w-[1px] h-3.5 bg-slate-800" />
-            <div className="flex items-center gap-1.5 text-emerald-400 font-bold">
-              <Radio className="w-3.5 h-3.5 animate-pulse text-rose-500" />
-              <span>REC 10Hz ({sampleCount} pts)</span>
-            </div>
-          </>
-        )}
       </div>
 
       {/* Primary Action Controls */}
@@ -173,24 +164,38 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
           />
         </label>
 
-        {/* Recenter SAM Button */}
+        {/* Clear KML / KMZ Overlays Button */}
         <button
-          onClick={onRecenter}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 transition-colors"
-          title="Recenter Map on SAM Site"
+          onClick={onClearKmlOverlays}
+          disabled={!overlayCount || overlayCount === 0}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded border transition-colors ${
+            overlayCount && overlayCount > 0
+              ? 'bg-slate-900 hover:bg-rose-950/70 border-slate-700 hover:border-rose-600/70 text-slate-200 hover:text-rose-200 cursor-pointer shadow-xs active:scale-95'
+              : 'bg-slate-900/40 border-slate-800/60 text-slate-600 cursor-not-allowed opacity-50'
+          }`}
+          title={
+            overlayCount && overlayCount > 0
+              ? `ล้างเส้นแผนที่ KML/KMZ ทั้งหมด (${overlayCount} ชั้นข้อมูล)`
+              : 'ไม่มีเส้นแผนที่ KML/KMZ ให้ล้าง'
+          }
         >
-          <Crosshair className="w-3.5 h-3.5 text-emerald-400" />
-          <span className="hidden md:inline">RECENTER</span>
+          <Trash2 className={`w-3.5 h-3.5 ${overlayCount && overlayCount > 0 ? 'text-rose-400' : 'text-slate-600'}`} />
+          <span className="hidden md:inline">CLEAR KML</span>
+          {overlayCount && overlayCount > 0 ? (
+            <span className="text-[10px] px-1 rounded bg-rose-950/80 text-rose-300 border border-rose-500/40 font-telemetry">
+              {overlayCount}
+            </span>
+          ) : null}
         </button>
 
         {/* System Settings Button */}
         <button
           onClick={onOpenSettings}
           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-cyan-300 transition-colors"
-          title="Configure SAM System Parameters & Radar Rings"
+          title="Configure System Settings, Bullseye & Radar Parameters"
         >
           <Settings className="w-3.5 h-3.5" />
-          <span>PARAMS</span>
+          <span>SETTING</span>
         </button>
 
         {/* Reset Simulation & History to Start Fresh */}

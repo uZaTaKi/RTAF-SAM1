@@ -14,6 +14,9 @@ export const SAM_PRESETS: Record<string, SAMConfig> = {
     maxSimultaneousEngagements: 4,
     defaultSpawnAltitudeFt: 25000,
     defaultSpawnSpeedMach: 0.85,
+    bullseyeEnabled: false,
+    bullseyeLat: 15.2500, // ~15° 15.000' N
+    bullseyeLon: 100.3500, // ~100° 21.000' E
     radarRings: [
       { id: 'ring_1', name: 'Inner Kill Zone (IKZ)', radiusNM: 5, color: '#EF4444', fillAlpha: 0.15 },
       { id: 'ring_2', name: 'No-Escape Zone (NEZ)', radiusNM: 18, color: '#F97316', fillAlpha: 0.10 },
@@ -35,6 +38,9 @@ export const SAM_PRESETS: Record<string, SAMConfig> = {
     maxSimultaneousEngagements: 2,
     defaultSpawnAltitudeFt: 15000,
     defaultSpawnSpeedMach: 0.75,
+    bullseyeEnabled: false,
+    bullseyeLat: 13.8500,
+    bullseyeLon: 100.6500,
     radarRings: [
       { id: 'ring_1', name: 'Minimum Range', radiusNM: 2, color: '#EF4444', fillAlpha: 0.15 },
       { id: 'ring_2', name: 'Optimum Intercept', radiusNM: 8, color: '#F97316', fillAlpha: 0.10 },
@@ -55,6 +61,9 @@ export const SAM_PRESETS: Record<string, SAMConfig> = {
     maxSimultaneousEngagements: 6,
     defaultSpawnAltitudeFt: 30000,
     defaultSpawnSpeedMach: 0.90,
+    bullseyeEnabled: false,
+    bullseyeLat: 14.9000,
+    bullseyeLon: 102.1500,
     radarRings: [
       { id: 'ring_1', name: 'Point Defense Zone', radiusNM: 10, color: '#EF4444', fillAlpha: 0.15 },
       { id: 'ring_2', name: 'No-Escape Zone', radiusNM: 35, color: '#F97316', fillAlpha: 0.10 },

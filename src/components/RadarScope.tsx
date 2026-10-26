@@ -12,6 +12,8 @@ import {
   getDestinationLatLon,
   formatAltitudeFL,
   formatFlightLevel,
+  normalizeDegree360,
+  formatDegree360,
 } from '../utils/geo';
 import {
   Crosshair,
@@ -29,6 +31,7 @@ interface RadarScopeProps {
   visualEffects: VisualEffect[];
   tacticalOverlays: TacticalOverlay[];
   selectedTargetId: string | null;
+  layoutKey?: string;
   onSelectTarget: (id: string | null) => void;
   onSpawnTarget: (lat: number, lon: number) => void;
   onUpdateTargetPosition: (id: string, lat: number, lon: number) => void;
@@ -42,6 +45,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
   visualEffects,
   tacticalOverlays,
   selectedTargetId,
+  layoutKey,
   onSelectTarget,
   onSpawnTarget,
   onUpdateTargetPosition,
@@ -50,12 +54,21 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  // Exact container dimensions to prevent aspect ratio distortion during panel toggles/resizing
+  const [dimensions, setDimensions] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+
   // Viewport transforms (center offset in NM relative to SAM site)
   const [centerOffsetNM, setCenterOffsetNM] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [zoomScale, setZoomScale] = useState<number>(1.0); // 1.0 means outer ring fits canvas nicely
   const [showOverlays, setShowOverlays] = useState<boolean>(true);
 
-  // Mouse interaction state
+  // Touch gesture refs for iPad & iPhone
+  const pinchStartDistRef = useRef<number | null>(null);
+  const pinchStartZoomRef = useRef<number>(1.0);
+  const touchMovedRef = useRef<boolean>(false);
+  const lastTouchTapTimeRef = useRef<number>(0);
+
+  // Mouse / Touch interaction HUD state
   const [cursorInfo, setCursorInfo] = useState<{
     visible: boolean;
     screenX: number;
@@ -75,6 +88,25 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
   const isPanningRef = useRef<boolean>(false);
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const draggedTargetIdRef = useRef<string | null>(null);
+  const beImgRef = useRef<HTMLImageElement | null>(null);
+
+  // Preload Bullseye roundel symbol image
+  useEffect(() => {
+    const img = new Image();
+    img.src = '/assets/aistudio/image_62445c87.png';
+    img.onload = () => {
+      beImgRef.current = img;
+    };
+  }, []);
+
+  // Bullseye active state and reference coordinates for BRA
+  const isBeActive = Boolean(
+    samConfig.bullseyeEnabled &&
+    samConfig.bullseyeLat !== undefined &&
+    samConfig.bullseyeLon !== undefined
+  );
+  const refLat = isBeActive ? samConfig.bullseyeLat! : samConfig.baseLat;
+  const refLon = isBeActive ? samConfig.bullseyeLon! : samConfig.baseLon;
 
   // Maximum outer ring radius
   const maxRadiusNM = Math.max(
@@ -147,23 +179,108 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedTargetId, onDeleteTarget]);
 
+  // Synchronize canvas buffer resolution with exact container size
+  const checkAndResizeCanvas = useCallback(() => {
+    const container = containerRef.current;
+    const canvas = canvasRef.current;
+    if (!container || !canvas) return;
+
+    const rect = container.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.floor(rect.width);
+    const h = Math.floor(rect.height);
+
+    if (w <= 0 || h <= 0) return;
+
+    const targetW = Math.round(w * dpr);
+    const targetH = Math.round(h * dpr);
+
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+      canvas.width = targetW;
+      canvas.height = targetH;
+    }
+
+    setDimensions((prev) => (prev.width === w && prev.height === h ? prev : { width: w, height: h }));
+  }, []);
+
+  // Monitor container size changes continuously via ResizeObserver
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    checkAndResizeCanvas();
+
+    const ro = new ResizeObserver(() => {
+      checkAndResizeCanvas();
+    });
+    ro.observe(container);
+
+    window.addEventListener('resize', checkAndResizeCanvas);
+    window.addEventListener('orientationchange', checkAndResizeCanvas);
+
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', checkAndResizeCanvas);
+      window.removeEventListener('orientationchange', checkAndResizeCanvas);
+    };
+  }, [checkAndResizeCanvas]);
+
+  // When layoutKey changes (e.g. Firing panel toggled, Shot log expanded, or target panel open/close),
+  // continuously update canvas dimensions across the 300ms CSS flex transition
+  useEffect(() => {
+    const start = performance.now();
+    let animId: number;
+
+    const tick = (now: number) => {
+      checkAndResizeCanvas();
+      if (now - start < 350) {
+        animId = requestAnimationFrame(tick);
+      }
+    };
+
+    animId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animId);
+  }, [layoutKey, checkAndResizeCanvas]);
+
+  // Prevent default touch gestures (iOS document pinch-zoom / bounce) on radar canvas
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const preventDefaultTouch = (e: TouchEvent) => {
+      if (e.touches.length > 1) {
+        e.preventDefault();
+      }
+    };
+
+    canvas.addEventListener('touchmove', preventDefaultTouch, { passive: false });
+    return () => {
+      canvas.removeEventListener('touchmove', preventDefaultTouch);
+    };
+  }, []);
 
   // Main Canvas Rendering Loop
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Handle high DPI displays
-    const rect = canvas.getBoundingClientRect();
+    // Handle high DPI displays with exact container dimensions
+    const rect = container.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
-    const width = rect.width;
-    const height = rect.height;
+    const width = Math.floor(rect.width);
+    const height = Math.floor(rect.height);
 
-    if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
-      canvas.width = width * dpr;
-      canvas.height = height * dpr;
+    if (width <= 0 || height <= 0) return;
+
+    const targetW = Math.round(width * dpr);
+    const targetH = Math.round(height * dpr);
+
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+      canvas.width = targetW;
+      canvas.height = targetH;
     }
 
     ctx.save();
@@ -174,38 +291,42 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     ctx.fillRect(0, 0, width, height);
 
     const samPixel = geoToPixel(samConfig.baseLat, samConfig.baseLon, width, height);
+    const bePixel = isBeActive ? geoToPixel(samConfig.bullseyeLat!, samConfig.bullseyeLon!, width, height) : null;
     const maxDim = Math.min(width, height) * 0.44;
     const pixelsPerNM = (maxDim / maxRadiusNM) * zoomScale;
 
-    // 2. Tactical Graticule: Radial spokes every 30 degrees
+    // 2. Tactical Graticule: Radial spokes every 30 degrees (centered at Bullseye if active, SAM base if not)
+    const graticuleOriginPixel = isBeActive && bePixel ? bePixel : samPixel;
     ctx.save();
-    ctx.translate(samPixel.x, samPixel.y);
+    ctx.translate(graticuleOriginPixel.x, graticuleOriginPixel.y);
 
-    ctx.strokeStyle = 'rgba(6, 182, 212, 0.12)';
+    ctx.strokeStyle = isBeActive ? 'rgba(245, 158, 11, 0.16)' : 'rgba(6, 182, 212, 0.12)';
     ctx.lineWidth = 1;
 
-    for (let deg = 0; deg < 360; deg += 30) {
+    // Generous spoke length to span across the screen even if BE is offset
+    const spokeLength = Math.max(width, height) * 1.6;
+
+    for (let deg = 30; deg <= 360; deg += 30) {
       const rad = ((deg - 90) * Math.PI) / 180;
       ctx.beginPath();
       ctx.moveTo(0, 0);
-      const spokeLength = maxRadiusNM * 1.35 * pixelsPerNM;
       ctx.lineTo(Math.cos(rad) * spokeLength, Math.sin(rad) * spokeLength);
       ctx.stroke();
 
-      // Degree label at outer edge
+      // Degree label at outer edge (001-360)
       const labelDist = maxRadiusNM * 1.05 * pixelsPerNM;
       const lx = Math.cos(rad) * labelDist;
       const ly = Math.sin(rad) * labelDist;
 
-      ctx.fillStyle = 'rgba(6, 182, 212, 0.45)';
+      ctx.fillStyle = isBeActive ? 'rgba(245, 158, 11, 0.65)' : 'rgba(6, 182, 212, 0.45)';
       ctx.font = '10px "JetBrains Mono", monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(`${deg.toString().padStart(3, '0')}°`, lx, ly);
+      ctx.fillText(`${formatDegree360(deg)}°`, lx, ly);
     }
 
     // Secondary 15 degree tick marks at outer boundary
-    for (let deg = 0; deg < 360; deg += 15) {
+    for (let deg = 15; deg <= 360; deg += 15) {
       if (deg % 30 === 0) continue;
       const rad = ((deg - 90) * Math.PI) / 180;
       const r1 = maxRadiusNM * pixelsPerNM;
@@ -417,9 +538,9 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       const tp = geoToPixel(t.lat, t.lon, width, height);
       const isSelected = t.id === selectedTargetId;
 
-      // Bearing & Range to SAM base
-      const brg = getBearingDeg(samConfig.baseLat, samConfig.baseLon, t.lat, t.lon);
-      const rng = getDistanceNM(samConfig.baseLat, samConfig.baseLon, t.lat, t.lon);
+      // Bearing & Range (relative to Bullseye if active, SAM base if not)
+      const brg = getBearingDeg(refLat, refLon, t.lat, t.lon);
+      const rng = getDistanceNM(refLat, refLon, t.lat, t.lon);
 
       // Selection reticle ring
       if (isSelected) {
@@ -469,28 +590,57 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       ctx.restore();
 
       // Aircraft Telemetry Label beside icon:
-      // Line 1: [Name] BBB/range (e.g. T1 170/25)
+      // Line 1: [Name] BBB/range (or [Name] BE BBB/range when Bullseye is active)
       // Line 2: FLxxx  Mxx (e.g. FL250  M0.85)
+      // Line 3: SAM launcher bearing relative to aircraft (3 digits 001-360 in RED, shown only when engaged)
       ctx.save();
-      const bbb = Math.round(brg).toString().padStart(3, '0');
+      const bbb = formatDegree360(brg);
       const rngFormatted = Math.round(rng).toString();
-      const line1 = `${t.id} ${bbb}/${rngFormatted}`;
+      const line1 = isBeActive ? `${t.id} BE ${bbb}/${rngFormatted}` : `${t.id} ${bbb}/${rngFormatted}`;
       const flText = formatFlightLevel(t.altitudeFt);
       const machText = `M${t.speedMach.toFixed(2)}`;
       const line2 = `${flText}  ${machText}`;
 
-      // Label background box for high legibility (2 lines)
+      // Check if aircraft is engaged / under missile attack
+      const targetMissiles = missiles.filter(
+        (m) => m.targetId === t.id && m.status === 'IN_FLIGHT'
+      );
+      const isUnderAttack = Boolean(t.isEngaged || targetMissiles.length > 0);
+
+      // 1. Bearing of the SAM launcher relative to the aircraft (3 digits 001-360)
+      const samBrgFromPlane = getBearingDeg(t.lat, t.lon, samConfig.baseLat, samConfig.baseLon);
+      const samBrgText = formatDegree360(samBrgFromPlane);
+
+      // 2. Bearing of nearest incoming missile relative to the aircraft (3 digits 001-360)
+      let nearestMissile: ActiveMissile | null = null;
+      let minMissileDist = Infinity;
+      for (const m of targetMissiles) {
+        const dist = getDistanceNM(t.lat, t.lon, m.currentLat, m.currentLon);
+        if (dist < minMissileDist) {
+          minMissileDist = dist;
+          nearestMissile = m;
+        }
+      }
+      const missileBrgFromPlane = nearestMissile
+        ? getBearingDeg(t.lat, t.lon, nearestMissile.currentLat, nearestMissile.currentLon)
+        : samBrgFromPlane;
+      const missileBrgText = formatDegree360(missileBrgFromPlane);
+
+      const line3Combined = `${samBrgText} / ${missileBrgText}`;
+
+      // Label background box for high legibility (2 lines normally, 3 lines when engaged)
       ctx.font = 'bold 11px "JetBrains Mono", monospace';
       const m1 = ctx.measureText(line1).width;
       const m2 = ctx.measureText(line2).width;
-      const boxW = Math.max(m1, m2) + 12;
-      const boxH = 30;
+      const m3 = isUnderAttack ? ctx.measureText(line3Combined).width : 0;
+      const boxW = Math.max(m1, m2, m3) + 12;
+      const boxH = isUnderAttack ? 43 : 30;
       const boxX = tp.x + 12;
       const boxY = tp.y - 15;
 
-      ctx.fillStyle = 'rgba(6, 11, 18, 0.90)';
+      ctx.fillStyle = 'rgba(6, 11, 18, 0.45)';
       ctx.fillRect(boxX, boxY, boxW, boxH);
-      ctx.strokeStyle = t.isEngaged ? '#F43F5E' : isSelected ? '#38BDF8' : '#334155';
+      ctx.strokeStyle = isUnderAttack ? '#F43F5E' : isSelected ? '#38BDF8' : '#334155';
       ctx.lineWidth = 1;
       ctx.strokeRect(boxX, boxY, boxW, boxH);
 
@@ -498,13 +648,34 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       ctx.textBaseline = 'top';
 
       // Line 1: Name and BBB/range
-      ctx.fillStyle = t.isEngaged ? '#FDA4AF' : isSelected ? '#BAE6FD' : '#E2E8F0';
+      ctx.fillStyle = isUnderAttack ? '#FDA4AF' : isSelected ? '#BAE6FD' : '#E2E8F0';
       ctx.fillText(line1, boxX + 6, boxY + 3);
 
       // Line 2: FLxx and speed in knots
       ctx.fillStyle = '#34D399'; // Emerald altitude and speed
       ctx.font = '10px "JetBrains Mono", monospace';
       ctx.fillText(line2, boxX + 6, boxY + 16);
+
+      // Line 3: Threat bearings: Launcher bearing (Orange) / Nearest missile bearing (Red)
+      if (isUnderAttack) {
+        ctx.font = 'bold 11px "JetBrains Mono", monospace';
+        const startX = boxX + 6;
+        const startY = boxY + 29;
+
+        // Launcher bearing (Orange)
+        ctx.fillStyle = '#FB923C';
+        ctx.fillText(samBrgText, startX, startY);
+        const samW = ctx.measureText(samBrgText).width;
+
+        // Separator slash (Neutral slate)
+        ctx.fillStyle = '#94A3B8';
+        ctx.fillText(' / ', startX + samW, startY);
+        const sepW = ctx.measureText(' / ').width;
+
+        // Nearest missile bearing (Red)
+        ctx.fillStyle = '#EF4444';
+        ctx.fillText(missileBrgText, startX + samW + sepW, startY);
+      }
       ctx.restore();
     }
 
@@ -546,6 +717,52 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     ctx.fillText(`${samConfig.systemName} (SAM-1)`, samPixel.x, samPixel.y + 20);
     ctx.restore();
 
+    // 10. Bullseye (B.E.) Symbol and Label (When active: small white ring)
+    if (isBeActive && bePixel) {
+      ctx.save();
+
+      // Subtle soft glow
+      ctx.beginPath();
+      ctx.arc(bePixel.x, bePixel.y, 8, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+      ctx.fill();
+
+      // Small white ring
+      ctx.beginPath();
+      ctx.arc(bePixel.x, bePixel.y, 5.5, 0, Math.PI * 2);
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+
+      // Tiny center dot
+      ctx.beginPath();
+      ctx.arc(bePixel.x, bePixel.y, 1.2, 0, Math.PI * 2);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fill();
+
+      // Small tactical crosshair tick marks (subtle)
+      ctx.beginPath();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+      ctx.lineWidth = 1;
+      ctx.moveTo(bePixel.x - 9, bePixel.y);
+      ctx.lineTo(bePixel.x - 6.5, bePixel.y);
+      ctx.moveTo(bePixel.x + 6.5, bePixel.y);
+      ctx.lineTo(bePixel.x + 9, bePixel.y);
+      ctx.moveTo(bePixel.x, bePixel.y - 9);
+      ctx.lineTo(bePixel.x, bePixel.y - 6.5);
+      ctx.moveTo(bePixel.x, bePixel.y + 6.5);
+      ctx.lineTo(bePixel.x, bePixel.y + 9);
+      ctx.stroke();
+
+      // Label below Bullseye symbol
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = 'bold 10px "Chakra Petch", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText('B.E.', bePixel.x, bePixel.y + 10);
+      ctx.restore();
+    }
+
     ctx.restore();
   }, [
     samConfig,
@@ -559,6 +776,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     showOverlays,
     geoToPixel,
     maxRadiusNM,
+    dimensions,
   ]);
 
   // Mouse Handlers: Cursor Brg/Range calculation, Double-click spawn, Dragging aircraft, Panning
@@ -569,10 +787,10 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
-    // Calculate real-time Bearing & Range relative to SAM base
+    // Calculate real-time Bearing & Range relative to reference (BE if active, SAM base if not)
     const geoPos = pixelToGeo(mouseX, mouseY, rect.width, rect.height);
-    const brg = getBearingDeg(samConfig.baseLat, samConfig.baseLon, geoPos.lat, geoPos.lon);
-    const rngNM = getDistanceNM(samConfig.baseLat, samConfig.baseLon, geoPos.lat, geoPos.lon);
+    const brg = getBearingDeg(refLat, refLon, geoPos.lat, geoPos.lon);
+    const rngNM = getDistanceNM(refLat, refLon, geoPos.lat, geoPos.lon);
     const rngKm = rngNM * 1.852;
 
     setCursorInfo({
@@ -677,17 +895,239 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     setZoomScale((prev) => Math.min(Math.max(prev * zoomFactor, 0.3), 8.0));
   };
 
+  // Touch Handlers for iPad & iPhone Gestures (1-finger pan/drag, 2-finger pinch-zoom, double-tap spawn)
+  const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+
+    // Two-finger Pinch to Zoom Start
+    if (e.touches.length === 2) {
+      draggedTargetIdRef.current = null;
+      isPanningRef.current = false;
+      touchMovedRef.current = true;
+
+      const t0 = e.touches[0];
+      const t1 = e.touches[1];
+      const dist = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
+      pinchStartDistRef.current = dist;
+      pinchStartZoomRef.current = zoomScale;
+
+      const midX = (t0.clientX + t1.clientX) / 2 - rect.left;
+      const midY = (t0.clientY + t1.clientY) / 2 - rect.top;
+      panStartRef.current = { x: midX, y: midY };
+      return;
+    }
+
+    // Single-finger touch
+    if (e.touches.length === 1) {
+      pinchStartDistRef.current = null;
+      touchMovedRef.current = false;
+
+      const touch = e.touches[0];
+      const touchX = touch.clientX - rect.left;
+      const touchY = touch.clientY - rect.top;
+
+      panStartRef.current = { x: touchX, y: touchY };
+
+      // Touch hit test on aircraft targets (generous 30px touch hit radius)
+      let clickedTarget: AircraftTarget | null = null;
+      for (const t of targets) {
+        const tp = geoToPixel(t.lat, t.lon, rect.width, rect.height);
+        const dist = Math.hypot(tp.x - touchX, tp.y - touchY);
+        if (dist <= 30) {
+          clickedTarget = t;
+          break;
+        }
+      }
+
+      if (clickedTarget) {
+        onSelectTarget(clickedTarget.id);
+        draggedTargetIdRef.current = clickedTarget.id;
+        isPanningRef.current = false;
+      } else {
+        isPanningRef.current = true;
+      }
+
+      // Update cursor / touch bearing and range HUD
+      const geoPos = pixelToGeo(touchX, touchY, rect.width, rect.height);
+      const brg = getBearingDeg(refLat, refLon, geoPos.lat, geoPos.lon);
+      const rngNM = getDistanceNM(refLat, refLon, geoPos.lat, geoPos.lon);
+      setCursorInfo({
+        visible: true,
+        screenX: touch.clientX,
+        screenY: touch.clientY,
+        bearingDeg: brg,
+        rangeNM: rngNM,
+        rangeKm: rngNM * 1.852,
+      });
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+
+    // Two-finger Pinch to Zoom & Pan
+    if (e.touches.length === 2 && pinchStartDistRef.current !== null) {
+      const t0 = e.touches[0];
+      const t1 = e.touches[1];
+      const currentDist = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
+
+      if (pinchStartDistRef.current > 0) {
+        const factor = currentDist / pinchStartDistRef.current;
+        const newZoom = Math.min(Math.max(pinchStartZoomRef.current * factor, 0.3), 8.0);
+        setZoomScale(newZoom);
+      }
+
+      const midX = (t0.clientX + t1.clientX) / 2 - rect.left;
+      const midY = (t0.clientY + t1.clientY) / 2 - rect.top;
+      const dx = midX - panStartRef.current.x;
+      const dy = midY - panStartRef.current.y;
+      panStartRef.current = { x: midX, y: midY };
+
+      const maxDim = Math.min(rect.width, rect.height) * 0.44;
+      const pixelsPerNM = (maxDim / maxRadiusNM) * zoomScale;
+
+      setCenterOffsetNM((prev) => ({
+        x: prev.x - dx / pixelsPerNM,
+        y: prev.y + dy / pixelsPerNM,
+      }));
+
+      return;
+    }
+
+    // Single-finger Move: Drag Target or Pan Map
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      const touchX = touch.clientX - rect.left;
+      const touchY = touch.clientY - rect.top;
+
+      const dx = touchX - panStartRef.current.x;
+      const dy = touchY - panStartRef.current.y;
+      if (Math.hypot(dx, dy) > 5) {
+        touchMovedRef.current = true;
+      }
+
+      const geoPos = pixelToGeo(touchX, touchY, rect.width, rect.height);
+      const brg = getBearingDeg(refLat, refLon, geoPos.lat, geoPos.lon);
+      const rngNM = getDistanceNM(refLat, refLon, geoPos.lat, geoPos.lon);
+
+      setCursorInfo({
+        visible: true,
+        screenX: touch.clientX,
+        screenY: touch.clientY,
+        bearingDeg: brg,
+        rangeNM: rngNM,
+        rangeKm: rngNM * 1.852,
+      });
+
+      // 1. Dragging Target
+      if (draggedTargetIdRef.current) {
+        onUpdateTargetPosition(draggedTargetIdRef.current, geoPos.lat, geoPos.lon);
+        return;
+      }
+
+      // 2. Panning Map
+      if (isPanningRef.current) {
+        panStartRef.current = { x: touchX, y: touchY };
+        const maxDim = Math.min(rect.width, rect.height) * 0.44;
+        const pixelsPerNM = (maxDim / maxRadiusNM) * zoomScale;
+
+        setCenterOffsetNM((prev) => ({
+          x: prev.x - dx / pixelsPerNM,
+          y: prev.y + dy / pixelsPerNM,
+        }));
+      }
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+
+    // Check if dragged aircraft outside canvas bounds
+    if (draggedTargetIdRef.current && e.changedTouches.length > 0) {
+      const touch = e.changedTouches[0];
+      const touchX = touch.clientX - rect.left;
+      const touchY = touch.clientY - rect.top;
+      if (touchX < 0 || touchX > rect.width || touchY < 0 || touchY > rect.height) {
+        onDeleteTarget(draggedTargetIdRef.current);
+      }
+    }
+
+    // Single Tap / Double Tap detection
+    if (!touchMovedRef.current && !draggedTargetIdRef.current && e.changedTouches.length === 1) {
+      const touch = e.changedTouches[0];
+      const touchX = touch.clientX - rect.left;
+      const touchY = touch.clientY - rect.top;
+
+      const now = Date.now();
+      const timeSinceLastTap = now - lastTouchTapTimeRef.current;
+      if (timeSinceLastTap < 350) {
+        // Double Tap -> spawn target at touch location
+        const geo = pixelToGeo(touchX, touchY, rect.width, rect.height);
+        onSpawnTarget(geo.lat, geo.lon);
+        lastTouchTapTimeRef.current = 0;
+      } else {
+        lastTouchTapTimeRef.current = now;
+
+        // Check if single tap touched an aircraft
+        let hitTarget = false;
+        for (const t of targets) {
+          const tp = geoToPixel(t.lat, t.lon, rect.width, rect.height);
+          if (Math.hypot(tp.x - touchX, tp.y - touchY) <= 30) {
+            hitTarget = true;
+            break;
+          }
+        }
+        if (!hitTarget) {
+          onSelectTarget(null);
+        }
+      }
+    }
+
+    // Reset interaction states when all fingers leave
+    if (e.touches.length === 0) {
+      isPanningRef.current = false;
+      draggedTargetIdRef.current = null;
+      pinchStartDistRef.current = null;
+      setCursorInfo((prev) => ({ ...prev, visible: false }));
+    } else if (e.touches.length === 1) {
+      // Transition from pinch back to 1-finger pan
+      pinchStartDistRef.current = null;
+      const t = e.touches[0];
+      panStartRef.current = {
+        x: t.clientX - rect.left,
+        y: t.clientY - rect.top,
+      };
+    }
+  };
+
+  const handleTouchCancel = () => {
+    isPanningRef.current = false;
+    draggedTargetIdRef.current = null;
+    pinchStartDistRef.current = null;
+    setCursorInfo((prev) => ({ ...prev, visible: false }));
+  };
+
   return (
-    <div ref={containerRef} className="relative w-full h-full select-none overflow-hidden bg-[#06090e]">
+    <div ref={containerRef} className="relative w-full h-full select-none overflow-hidden bg-[#06090e] touch-none">
       <canvas
         ref={canvasRef}
-        className="w-full h-full block cursor-crosshair"
+        className="w-full h-full block cursor-crosshair touch-none"
         onMouseMove={handleMouseMove}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
         onDoubleClick={handleDoubleClick}
         onWheel={handleWheel}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchCancel}
       />
 
       {/* Dynamic Cursor Floating Bearing / Range HUD at bottom-right corner of cursor */}
@@ -700,8 +1140,11 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
           }}
         >
           <div className="flex items-center font-bold">
+            {isBeActive && (
+              <span className="text-amber-400 font-bold mr-1 text-[10px]">BE</span>
+            )}
             <span className="text-cyan-200">
-              {Math.round(cursorInfo.bearingDeg).toString().padStart(3, '0')}/{Math.round(cursorInfo.rangeNM)}
+              {formatDegree360(cursorInfo.bearingDeg)}/{Math.round(cursorInfo.rangeNM)}
             </span>
           </div>
         </div>
@@ -750,13 +1193,23 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       )}
 
       {/* Tactical Canvas Helper Footer */}
-      <div className="absolute bottom-2 left-3 flex items-center gap-3 text-[11px] font-military text-slate-400 bg-slate-950/70 px-2 py-1 rounded border border-slate-900 pointer-events-none">
-        <span>DOUBLE-CLICK MAP TO SPAWN TARGET</span>
+      <div className="absolute bottom-2 left-3 flex items-center gap-2.5 text-[11px] font-military text-slate-400 bg-slate-950/80 px-2.5 py-1 rounded border border-slate-900 pointer-events-none backdrop-blur-xs">
+        <span className="hidden sm:inline">DOUBLE-CLICK / DOUBLE-TAP TO SPAWN</span>
+        <span className="sm:hidden">DOUBLE-TAP SPAWN</span>
         <span>·</span>
-        <span>DRAG TO REPOSITION</span>
+        <span className="hidden sm:inline">1-FINGER PAN / 2-FINGER PINCH ZOOM</span>
+        <span className="sm:hidden">PINCH ZOOM / PAN</span>
         <span>·</span>
         <span>ZOOM: {Math.round(zoomScale * 100)}%</span>
       </div>
+
+      {/* Bullseye Active Tactical Status Indicator (Bottom-Right) */}
+      {isBeActive && (
+        <div className="absolute bottom-2.5 right-3 flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-950/90 border border-amber-500/80 shadow-lg text-xs font-telemetry font-bold text-amber-400 select-none z-10 backdrop-blur-xs">
+          <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+          <span className="tracking-wider">B.E. Active</span>
+        </div>
+      )}
     </div>
   );
 };
