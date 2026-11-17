@@ -1,8 +1,21 @@
+// ========================================================================================
+// ไฟล์: src/components/SAMParametersModal.tsx
+// หน้าที่: หน้าต่างโมดัลสำหรับตั้งค่าพารามิเตอร์ของระบบจำลอง (SETTING Modal)
+// คำอธิบาย: ปรับแต่งตำแหน่งฐานที่ตั้ง SAM, จุดอ้างอิงทางยุทธวิธี Bullseye (B.E.), คุณลักษณะจรวด,
+//          ค่าความสูง/ความเร็วเริ่มต้นของเป้าบินจำลอง และวงแหวนแสดงระยะเรดาร์ (Radar Range Rings)
+// ========================================================================================
+
+// นำเข้า React hooks
 import React, { useState } from 'react';
+// นำเข้าโครงสร้างข้อมูล SAMConfig และ RadarRing
 import { SAMConfig, RadarRing } from '../types/simulation';
+// นำเข้าฟังก์ชันแปลงพิกัดทหาร และฟอร์แมตเวลา
 import { decimalToDDMM, parseDDMM, formatMMSS } from '../utils/geo';
+// นำเข้าชุดพรีเซ็ตสำเร็จรูปและคอนฟิกเริ่มต้น
 import { SAM_PRESETS, DEFAULT_SAM_CONFIG } from '../utils/presets';
+// นำเข้าฟังก์ชันดาวน์โหลดไฟล์
 import { triggerFileDownload } from '../utils/gpxExporter';
+// นำเข้าไอคอนจาก lucide-react
 import {
   Settings,
   X,
@@ -17,10 +30,17 @@ import {
   Plane,
 } from 'lucide-react';
 
+/**
+ * กำหนด Props สำหรับคอมโพเนนต์ SAMParametersModal
+ */
 interface SAMParametersModalProps {
+  /** ข้อมูลการตั้งค่าระบบปัจจุบัน */
   config: SAMConfig;
+  /** สถานะเปิด/ปิดหน้าต่างโมดัล */
   isOpen: boolean;
+  /** ฟังก์ชัน Callback เมื่อปิดหน้าต่างโมดัล */
   onClose: () => void;
+  /** ฟังก์ชัน Callback เมื่อกดบันทึกการตั้งค่าใหม่ */
   onSave: (newConfig: SAMConfig) => void;
 }
 
@@ -30,20 +50,29 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
   onClose,
   onSave,
 }) => {
+  // สเตตเก็บข้อมูลฟอร์มที่กำลังแก้ไข
   const [formData, setFormData] = useState<SAMConfig>({ ...config });
+  // สเตตเก็บข้อความพิกัดฐานยิงรูปแบบทหาร DD° MM.MMM' N/S
   const [latInput, setLatInput] = useState<string>(decimalToDDMM(config.baseLat, true));
+  // สเตตเก็บข้อความพิกัดฐานยิงรูปแบบทหาร DD° MM.MMM' E/W
   const [lonInput, setLonInput] = useState<string>(decimalToDDMM(config.baseLon, false));
+  // สเตตเก็บข้อความพิกัด Bullseye ละติจูด
   const [beLatInput, setBeLatInput] = useState<string>(
     decimalToDDMM(config.bullseyeLat ?? config.baseLat, true)
   );
+  // สเตตเก็บข้อความพิกัด Bullseye ลองจิจูด
   const [beLonInput, setBeLonInput] = useState<string>(
     decimalToDDMM(config.bullseyeLon ?? config.baseLon, false)
   );
+  // สเตตเก็บคีย์พรีเซ็ตที่เลือก (เช่น 'ks1c', 'spada')
   const [selectedPresetKey, setSelectedPresetKey] = useState<string>('ks1c');
+  // ข้อความแจ้งเตือนสถานะชั่วคราว
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
+  // หาก isOpen เป็น false จะไม่เรนเดอร์อะไรเลย
   if (!isOpen) return null;
 
+  // ฟังก์ชันโหลดข้อมูลพรีเซ็ตสำเร็จรูป
   const handleApplyPreset = (key: string) => {
     const preset = SAM_PRESETS[key];
     if (preset) {
@@ -58,6 +87,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
     }
   };
 
+  // ฟังก์ชันรีเซ็ตกลับเป็นค่าเริ่มต้นโรงงาน (Factory Defaults)
   const handleResetToDefault = () => {
     setSelectedPresetKey('ks1c');
     setFormData({ ...DEFAULT_SAM_CONFIG });
@@ -69,11 +99,13 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
     setTimeout(() => setStatusMsg(null), 3000);
   };
 
+  // ฟังก์ชันส่งออกการตั้งค่าเป็นไฟล์ JSON
   const handleSaveToFile = () => {
     const jsonStr = JSON.stringify(formData, null, 2);
     triggerFileDownload(jsonStr, `${formData.systemName.replace(/[\s/]/g, '_')}_config.json`, 'application/json');
   };
 
+  // ฟังก์ชันนำเข้าการตั้งค่าจากไฟล์ JSON ที่เคยบันทึกไว้
   const handleLoadFromFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -101,6 +133,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
     reader.readAsText(file);
   };
 
+  // ฟังก์ชันเพิ่มวงแหวนเรดาร์ใหม่
   const handleAddRing = () => {
     const nextRadius = (formData.radarRings[formData.radarRings.length - 1]?.radiusNM || 10) + 15;
     const newRing: RadarRing = {
@@ -116,6 +149,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
     });
   };
 
+  // ฟังก์ชันลบวงแหวนเรดาร์
   const handleRemoveRing = (index: number) => {
     setFormData({
       ...formData,
@@ -123,15 +157,17 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
     });
   };
 
+  // ฟังก์ชันแก้ไขข้อมูลวงแหวนเรดาร์
   const handleUpdateRing = (index: number, updates: Partial<RadarRing>) => {
     const updated = [...formData.radarRings];
     updated[index] = { ...updated[index], ...updates };
     setFormData({ ...formData, radarRings: updated });
   };
 
+  // ฟังก์ชันตรวจสอบความถูกต้องและบันทึกข้อมูลฟอร์ม
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Validate SAM Base coordinates
+    // แปลงและตรวจสอบพิกัดฐานยิง SAM
     const parsedLat = parseDDMM(latInput);
     const parsedLon = parseDDMM(lonInput);
 
@@ -140,7 +176,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
       return;
     }
 
-    // Validate Bullseye coordinates if enabled
+    // แปลงและตรวจสอบพิกัด Bullseye กรณีเปิดใช้งาน
     const parsedBeLat = parseDDMM(beLatInput);
     const parsedBeLon = parseDDMM(beLonInput);
 
@@ -151,6 +187,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
       }
     }
 
+    // ประกอบออบเจกต์การตั้งค่าฉบับสมบูรณ์
     const finalConfig: SAMConfig = {
       ...formData,
       baseLat: parsedLat,
@@ -160,6 +197,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
       bullseyeLon: parsedBeLon !== null ? parsedBeLon : (formData.bullseyeLon ?? parsedLon),
     };
 
+    // ส่งค่ากลับไปยัง App.tsx และปิดโมดัล
     onSave(finalConfig);
     onClose();
   };
@@ -167,7 +205,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm font-military">
       <div className="w-full max-w-3xl max-h-[92vh] flex flex-col rounded-xl bg-slate-950 border border-slate-800 shadow-2xl overflow-hidden text-slate-200">
-        {/* Modal Header */}
+        {/* ส่วนหัวหน้าต่างโมดัล */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 bg-slate-900/80">
           <div className="flex items-center gap-2.5">
             <Settings className="w-5 h-5 text-cyan-400" />
@@ -183,7 +221,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
           </button>
         </div>
 
-        {/* Action Bar: Presets & File Actions */}
+        {/* แถบการกระทำ: พรีเซ็ต บันทึก/โหลดไฟล์ และปุ่มรีเซ็ต */}
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-slate-800/80 bg-slate-900/40 text-xs">
           <div className="flex items-center gap-2">
             <span className="font-semibold text-slate-400">PRESETS:</span>
@@ -199,11 +237,13 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {/* โหลดไฟล์คอนฟิก JSON */}
             <label className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 cursor-pointer transition-colors">
               <Upload className="w-3.5 h-3.5" />
               <span>LOAD FILE</span>
               <input type="file" accept=".json" onChange={handleLoadFromFile} className="hidden" />
             </label>
+            {/* บันทึกลงไฟล์ JSON */}
             <button
               onClick={handleSaveToFile}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 transition-colors"
@@ -211,6 +251,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
               <Save className="w-3.5 h-3.5" />
               <span>SAVE TO FILE</span>
             </button>
+            {/* รีเซ็ตค่าเริ่มต้น */}
             <button
               onClick={handleResetToDefault}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-rose-300 transition-colors"
@@ -222,6 +263,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
           </div>
         </div>
 
+        {/* แถบแสดงสถานะผลการดำเนินการ */}
         {statusMsg && (
           <div className="px-5 py-2 bg-cyan-950/50 border-b border-cyan-800/60 text-xs text-cyan-300 flex items-center gap-2">
             <Check className="w-3.5 h-3.5" />
@@ -229,9 +271,9 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
           </div>
         )}
 
-        {/* Scrollable Form Body */}
+        {/* เนื้อหาฟอร์มการตั้งค่า */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-          {/* Section 1: System Identity & Base Coordinates */}
+          {/* หมวดที่ 1: ชื่อระบบและพิกัดฐานยิง SAM */}
           <div className="p-4 rounded-lg bg-slate-900/50 border border-slate-800 space-y-3">
             <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider">
               1. SYSTEM IDENTITY & SAM BASE LOCATION
@@ -282,7 +324,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
             </div>
           </div>
 
-          {/* Section 2: Bullseye (B.E.) Reference Configuration */}
+          {/* หมวดที่ 2: การตั้งค่าจุดอ้างอิงทางยุทธวิธี Bullseye (B.E.) */}
           <div className="p-4 rounded-lg bg-slate-900/50 border border-slate-800 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -291,6 +333,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
                   2. BULLSEYE (B.E.) REFERENCE CONFIGURATION
                 </span>
               </div>
+              {/* เช็คบ็อกซ์เลือกเปิด/ปิดใช้งาน Bullseye */}
               <label className="flex items-center gap-2 cursor-pointer select-none bg-slate-950 px-2.5 py-1 rounded border border-slate-800 hover:border-amber-500/50 transition-colors">
                 <input
                   type="checkbox"
@@ -308,6 +351,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
               เมื่อเลือกใช้ B.E. ค่า BRA (Bearing/Range) ของเครื่องบินและเคอร์เซอร์จะคำนวณเทียบจากตำแหน่ง B.E. แทนตัวจรวด/แท่นยิง พร้อมแสดงสัญลักษณ์ B.E. และเส้นใยแมงมุมบอกองศาที่ตำแหน่ง B.E. (โดย Center ของแผนที่ยังคงอยู่ที่แท่นยิง)
             </p>
 
+            {/* ช่องกรอกพิกัด B.E. ซึ่งจะถูก Disable ถ้าไม่ได้ติ๊กเปิดใช้งาน */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs pt-1">
               <div>
                 <label className={`block mb-1 font-semibold ${formData.bullseyeEnabled ? 'text-slate-300' : 'text-slate-600'}`}>
@@ -348,7 +392,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
             </div>
           </div>
 
-          {/* Section 3: Launchers & Kinetic Parameters (Missile/Rocket only) */}
+          {/* หมวดที่ 3: แท่นยิงและคุณลักษณะขีปนาวุธจรวด */}
           <div className="p-4 rounded-lg bg-slate-900/50 border border-slate-800 space-y-3">
             <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider">
               3. LAUNCHER MATRIX & MISSILE KINEMATICS
@@ -401,22 +445,23 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
               </div>
               <div className="col-span-2">
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-slate-400">Launcher Reload Time (Max 10 min)</label>
+                  <label className="text-slate-400">Launcher Reload Time (Max 30 min)</label>
                   <span className="text-amber-300 font-telemetry font-bold">
                     {formatMMSS(formData.launcherReloadTimeSec)} ({formData.launcherReloadTimeSec}s)
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
+                  {/* กล่องกรอกตัวเลขเวลาโหลดจรวดใหม่ แยกเป็น นาที : วินาที (สูงสุด 30 นาที / 1800 วินาที) */}
                   <div className="flex items-center gap-1 bg-slate-950 px-2 py-1 rounded border border-slate-700">
                     <input
                       type="number"
                       min={0}
-                      max={10}
+                      max={30}
                       value={Math.floor(formData.launcherReloadTimeSec / 60)}
                       onChange={(e) => {
-                        const m = Math.max(0, Math.min(10, parseInt(e.target.value, 10) || 0));
+                        const m = Math.max(0, Math.min(30, parseInt(e.target.value, 10) || 0));
                         const s = formData.launcherReloadTimeSec % 60;
-                        const total = Math.min(600, m * 60 + s);
+                        const total = Math.min(1800, m * 60 + s);
                         setFormData({ ...formData, launcherReloadTimeSec: total });
                       }}
                       className="w-10 text-center text-slate-100 font-telemetry font-bold bg-transparent focus:outline-hidden"
@@ -431,17 +476,18 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
                       onChange={(e) => {
                         const m = Math.floor(formData.launcherReloadTimeSec / 60);
                         const s = Math.max(0, Math.min(59, parseInt(e.target.value, 10) || 0));
-                        const total = Math.min(600, m * 60 + s);
+                        const total = Math.min(1800, m * 60 + s);
                         setFormData({ ...formData, launcherReloadTimeSec: total });
                       }}
                       className="w-10 text-center text-slate-100 font-telemetry font-bold bg-transparent focus:outline-hidden"
                     />
                     <span className="text-[10px] text-slate-400 font-telemetry">sec</span>
                   </div>
+                  {/* แถบเลื่อนปรับเวลาโหลดจรวดใหม่ (5 วินาที - 1800 วินาที / 30 นาที) */}
                   <input
                     type="range"
                     min={5}
-                    max={600}
+                    max={1800}
                     step={5}
                     value={formData.launcherReloadTimeSec}
                     onChange={(e) =>
@@ -468,7 +514,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
             </div>
           </div>
 
-          {/* Section 4: Default Target Spawn Parameters (Separated from Missile section) */}
+          {/* หมวดที่ 4: การตั้งค่าเป้าบินจำลองเริ่มต้น (แยกออกจากการตั้งค่าจรวด) */}
           <div className="p-4 rounded-lg bg-slate-900/50 border border-slate-800 space-y-3">
             <div className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
               <Plane className="w-4 h-4 text-emerald-400" />
@@ -515,7 +561,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
             </div>
           </div>
 
-          {/* Section 5: Radar Tracking Range Rings */}
+          {/* หมวดที่ 5: วงแหวนระยะตรวจจับและขอบเขตการยิงเรดาร์ (Radar Tracking Rings) */}
           <div className="p-4 rounded-lg bg-slate-900/50 border border-slate-800 space-y-3">
             <div className="flex items-center justify-between">
               <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider">
@@ -582,7 +628,7 @@ export const SAMParametersModal: React.FC<SAMParametersModalProps> = ({
             </div>
           </div>
 
-          {/* Modal Footer */}
+          {/* ส่วนท้ายโมดัล: ปุ่มยกเลิกและปุ่มยืนยันการตั้งค่า */}
           <div className="flex items-center justify-end gap-3 pt-2">
             <button
               type="button"

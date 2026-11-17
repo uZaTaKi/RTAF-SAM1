@@ -1,61 +1,71 @@
+// ========================================================================================
+// ไฟล์: src/utils/gpxExporter.ts
+// หน้าที่: สร้างและส่งออกไฟล์ข้อมูลมาตรฐาน GPX 1.1 และ CSV บันทึกผลการยิง
+// คำอธิบาย: รวบรวมเทเลเมทรี 10Hz ของเป้าบิน จรวด SAM และพิกัดฐานยิง เพื่อนำไปเปิดวิเคราะห์ใน Tacview / ACMI
+//          โดยรองรับการตัดจบวิถีการบินอย่างแม่นยำ ณ จุดสกัดกั้น (Intercept HIT) ทันทีที่เครื่องบินถูกทำลาย
+// ========================================================================================
+
+// นำเข้าอินเทอร์เฟซโครงสร้างข้อมูลจากการจำลอง
 import { SimulationTelemetrySample, ShotLogEntry, SAMConfig } from '../types/simulation';
+// นำเข้าฟังก์ชันช่วยเหลือทางภูมิศาสตร์และการจัดรูปแบบตัวเลข
 import { decimalToDDMM, parseDDMM, formatFlightLevel, formatDegree360 } from './geo';
 
 /**
- * Builds GPX 1.1 XML specifically for Aircraft Targets.
- * Fixes target persistence issue:
- * Once an aircraft target is destroyed (HIT), all further coordinates are truncated,
- * the track terminates immediately at the intercept point, and an Event Marker (<wpt>)
- * is injected to enable Tacview/ACMI to display the destruction explosion and remove the icon.
+ * โครงสร้างข้อมูลวิถีการบินของเป้าบินหลังผ่านการตรวจสอบและตัดแต่งจุดสกัดกั้น
  */
 interface ProcessedTargetTrack {
+  /** รายการจุดพิกัดการบินตามลำดับเวลา */
   points: Array<{ time: string; lat: number; lon: number; altFt: number; hdg: number; spd: number }>;
+  /** เครื่องบินถูกยิงตก (HIT) หรือไม่ */
   destroyed: boolean;
 }
 
 /**
- * Accurately processes raw aircraft telemetry samples:
- * - Preserves all flight points across parameter adjustments (heading, alt, speed) and map drags.
- * - If intercepted by a SAM missile (HIT), smoothly terminates the track at the exact intercept coordinates
- *   and intercept time without duplicate or inverted timestamps.
- * - Does not inject extra <wpt> markers (as per user specifications).
+ * ฟังก์ชันประมวลผลจุดวิถีการบินของเป้าหมายเครื่องบิน:
+ * 1. รวบรวมตำแหน่งต่อเนื่องแม้จะมีการปรับพารามิเตอร์ (เลี้ยว, ไต่ความสูง, เร่งความเร็ว) หรือการลากบนแผนที่
+ * 2. หากเป้าหมายถูกยิงสกัดกั้นสำเร็จ (HIT) จะตัดเส้นทางบินให้สิ้นสุดลง ณ จุดและเวลาที่จรวดชนเป้าหมายพอดี
+ * 3. เรียงลำดับเวลาอย่างถูกต้อง ไม่ให้เกิด Timestamp ซ้ำซ้อนหรือย้อนกลับ
+ * @param samples ข้อมูลเทเลเมทรีดิบ 10Hz
+ * @param shotLogs บันทึกประวัติการยิง
+ * @returns Map ของ Target ID กับเส้นทางบินที่ประมวลผลแล้ว
  */
 function processAircraftTargetTracks(
   samples: SimulationTelemetrySample[],
   shotLogs: ShotLogEntry[]
 ): Map<string, ProcessedTargetTrack> {
-  // 1. Group raw aircraft points by target ID
+  // 1. จัดกลุ่มจุดพิกัดดิบตาม ID ของเป้าบินแต่ละลำ
   const rawTargetPoints = new Map<
     string,
     Array<{ time: string; lat: number; lon: number; altFt: number; hdg: number; spd: number }>
   >();
 
+  // วนลูปอ่านตัวอย่างเทเลเมทรีทีละเสี้ยววินาที
   for (const s of samples) {
     for (const t of s.targets) {
       if (!rawTargetPoints.has(t.id)) {
         rawTargetPoints.set(t.id, []);
       }
       rawTargetPoints.get(t.id)!.push({
-        time: s.timestampIso,
-        lat: t.lat,
-        lon: t.lon,
-        altFt: t.altitudeFt,
-        hdg: t.headingDeg,
-        spd: t.speedMach,
+        time: s.timestampIso, // เวลาสากล ISO
+        lat: t.lat, // ละติจูด
+        lon: t.lon, // ลองจิจูด
+        altFt: t.altitudeFt, // ความสูง (ฟุต)
+        hdg: t.headingDeg, // มุมทิศทางการบิน
+        spd: t.speedMach, // ความเร็วมัค
       });
     }
   }
 
   const processedTargetTracks = new Map<string, ProcessedTargetTrack>();
 
+  // วนลูปประมวลผลเส้นทางบินของเครื่องบินทีละลำ
   rawTargetPoints.forEach((pts, targetId) => {
     if (pts.length === 0) return;
 
+    // เวลาเริ่มบินของลำนี้
     const trackStartMs = new Date(pts[0].time).getTime();
 
-    // Find the latest HIT log that genuinely corresponds to this target session:
-    // It must match targetName === targetId, result === 'HIT',
-    // and hit time must be >= trackStartMs - 2000 (not an obsolete hit from an old run).
+    // ค้นหาบันทึกการยิงโดนเป้า (HIT) ที่สอดคล้องกับเครื่องบินลำนี้ในรอบการบินปัจจุบัน
     const hitLog = shotLogs.find((l) => {
       if (l.targetName !== targetId || l.result !== 'HIT') return false;
       const hitIso = l.interceptTimestampIso || l.timestampIso;
@@ -67,16 +77,16 @@ function processAircraftTargetTracks(
     let finalPts = pts;
     let isDestroyed = false;
 
+    // หากพบว่าเครื่องบินลำนี้ถูกจรวดยิงตก
     if (hitLog) {
       isDestroyed = true;
       const hitIso = hitLog.interceptTimestampIso || hitLog.timestampIso || pts[pts.length - 1].time;
       const hitTimeMs = new Date(hitIso).getTime();
 
-      // Keep all track points recorded up to the intercept moment
+      // กรองเก็บเฉพาะจุดบินที่เกิดขึ้นก่อนหรือตรงกับเวลาสกัดกั้นเท่านั้น (ตัดจุดหลังจากถูกยิงตกทิ้ง)
       finalPts = pts.filter((p) => new Date(p.time).getTime() <= hitTimeMs);
 
-      // Ensure the exact intercept point is present at the end of the track
-      // with strictly monotonic timestamps (no duplicates)
+      // ตรวจสอบและแทรกพิกัดจุดตก/จุดชนเป้าหมายที่แท้จริงปิดท้ายเส้นทาง
       if (hitLog.interceptLat !== undefined && hitLog.interceptLon !== undefined) {
         if (finalPts.length === 0) {
           finalPts = [
@@ -93,13 +103,13 @@ function processAircraftTargetTracks(
           const lastPt = finalPts[finalPts.length - 1];
           const lastPtTimeMs = new Date(lastPt.time).getTime();
 
+          // หากเวลาจุดสุดท้ายใกล้เคียงจุดชนมาก ให้แทนที่พิกัดจุดสุดท้าย
           if (Math.abs(lastPtTimeMs - hitTimeMs) < 150) {
-            // Update last point to exact intercept coordinates
             lastPt.lat = hitLog.interceptLat;
             lastPt.lon = hitLog.interceptLon;
             if (hitLog.interceptAltFt !== undefined) lastPt.altFt = hitLog.interceptAltFt;
           } else if (lastPtTimeMs < hitTimeMs) {
-            // Append the intercept point strictly after the last point
+            // หากยังมีเวลาเหลือ ให้เพิ่มจุดสกัดกั้นต่อท้ายสุด
             finalPts.push({
               lat: hitLog.interceptLat,
               lon: hitLog.interceptLon,
@@ -113,6 +123,7 @@ function processAircraftTargetTracks(
       }
     }
 
+    // บันทึกผลลัพธ์ลงใน Map
     processedTargetTracks.set(targetId, {
       points: finalPts,
       destroyed: isDestroyed,
@@ -122,6 +133,12 @@ function processAircraftTargetTracks(
   return processedTargetTracks;
 }
 
+/**
+ * สร้างไฟล์ XML GPX 1.1 สำหรับเส้นทางบินของเครื่องบินเป้าหมายเท่านั้น
+ * @param samples ตัวอย่างเทเลเมทรี
+ * @param shotLogs บันทึกประวัติการยิง
+ * @returns ข้อความ XML รูปแบบ GPX
+ */
 export function generateAircraftGPX(
   samples: SimulationTelemetrySample[],
   shotLogs: ShotLogEntry[]
@@ -129,6 +146,7 @@ export function generateAircraftGPX(
   const startTime = samples[0]?.timestampIso || new Date().toISOString();
   const processedTargetTracks = processAircraftTargetTracks(samples, shotLogs);
 
+  // เริ่มต้นโครงสร้างหัวไฟล์ GPX XML
   let gpx = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="RTAF SAM-1 Simulation System" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
   <metadata>
@@ -138,7 +156,7 @@ export function generateAircraftGPX(
   </metadata>
 `;
 
-  // Aircraft Tracks
+  // วนลูปสร้างแทร็กการบิน <trk> ของเครื่องบินแต่ละลำ
   processedTargetTracks.forEach((data, targetId) => {
     gpx += `  <trk>
     <name>${escapeXml(targetId)} (Aircraft Target)</name>
@@ -147,10 +165,12 @@ export function generateAircraftGPX(
 
     for (let i = 0; i < data.points.length; i++) {
       const pt = data.points[i];
+      // แปลงความสูงจากฟุตเป็นเมตรตามมาตรฐาน GPX ele
       const eleM = (pt.altFt * 0.3048).toFixed(1);
       const isLastPoint = i === data.points.length - 1;
       const isDestructionPoint = isLastPoint && data.destroyed;
 
+      // จุดติดตาม <trkpt> พร้อมความสูง เวลา มุมทิศทาง และความเร็ว
       gpx += `      <trkpt lat="${pt.lat.toFixed(6)}" lon="${pt.lon.toFixed(6)}">
         <ele>${eleM}</ele>
         <time>${pt.time}</time>
@@ -173,7 +193,10 @@ ${isDestructionPoint ? `          <event>DESTROYED</event>\n          <status>DE
 }
 
 /**
- * Builds GPX 1.1 XML specifically for SAM Battery and Missile Trajectories.
+ * สร้างไฟล์ XML GPX 1.1 สำหรับฐานที่ตั้งระบบ SAM และวิถีการบินของจรวดทุกลูก
+ * @param samples ตัวอย่างเทเลเมทรี
+ * @param samConfig การตั้งค่าระบบ SAM
+ * @returns ข้อความ XML รูปแบบ GPX
  */
 export function generateBatteryMissilesGPX(
   samples: SimulationTelemetrySample[],
@@ -182,7 +205,7 @@ export function generateBatteryMissilesGPX(
   const startTime = samples[0]?.timestampIso || new Date().toISOString();
   const baseEleM = (samConfig.baseElevationFt * 0.3048).toFixed(1);
 
-  // Group missile trajectory points
+  // จัดกลุ่มจุดวิถีการบินของลูกจรวดตาม Missile ID
   const missileTrackMap = new Map<
     string,
     Array<{ time: string; lat: number; lon: number; altFt: number; targetId: string; status: string }>
@@ -208,11 +231,11 @@ export function generateBatteryMissilesGPX(
 <gpx version="1.1" creator="RTAF SAM-1 Simulation System" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
   <metadata>
     <name>RTAF SAM-1 Battery &amp; Missile Telemetry</name>
-    <desc>SAM Base Battery at ${decimalToDDMM(samConfig.baseLat, true)}, ${decimalToDDMM(samConfig.baseLon, false)} and all fired missile trajectories at 4 Hz</desc>
+    <desc>SAM Base Battery at ${decimalToDDMM(samConfig.baseLat, true)}, ${decimalToDDMM(samConfig.baseLon, false)} and all fired missile trajectories</desc>
     <time>${startTime}</time>
   </metadata>
 
-  <!-- SAM Site Static Battery Marker -->
+  <!-- มาร์กเกอร์จุดที่ตั้งฐานยิง SAM (Static Battery Waypoint) -->
   <wpt lat="${samConfig.baseLat.toFixed(6)}" lon="${samConfig.baseLon.toFixed(6)}">
     <ele>${baseEleM}</ele>
     <name>${escapeXml(samConfig.systemName)} (SAM Base)</name>
@@ -227,7 +250,7 @@ export function generateBatteryMissilesGPX(
   </wpt>
 `;
 
-  // Missile Trajectories
+  // วิถีการบินของลูกจรวดขีปนาวุธต่อสู้อากาศยาน
   missileTrackMap.forEach((points, missileId) => {
     const targetId = points[0]?.targetId || 'UNKNOWN';
     const finalStatus = points[points.length - 1]?.status || 'UNKNOWN';
@@ -259,11 +282,12 @@ export function generateBatteryMissilesGPX(
 }
 
 /**
- * Builds standard unified GPX 1.1 XML combining:
- * 1. SAM Base Battery Waypoint
- * 2. Aircraft Destruction Event Waypoints (<wpt>)
- * 3. Aircraft Flight Tracks (<trk> with kinetic cutoff at intercept)
- * 4. Surface-to-Air Missile Trajectories (<trk>)
+ * สร้างไฟล์ XML GPX 1.1 แบบรวมศูนย์สมบูรณ์แบบ (Unified GPX):
+ * รวมทั้ง ฐานที่ตั้ง SAM, เส้นทางบินของเครื่องบินเป้าหมาย และวิถีการบินของลูกจรวด
+ * @param samples ข้อมูลเทเลเมทรี
+ * @param shotLogs บันทึกประวัติการยิง
+ * @param samConfig การตั้งค่าระบบ SAM
+ * @returns ข้อความ XML รูปแบบ GPX
  */
 export function generateUnifiedGPX(
   samples: SimulationTelemetrySample[],
@@ -273,10 +297,10 @@ export function generateUnifiedGPX(
   const startTime = samples[0]?.timestampIso || new Date().toISOString();
   const baseEleM = (samConfig.baseElevationFt * 0.3048).toFixed(1);
 
-  // 1 & 2. Process aircraft points: truncate at destruction time without duplicates
+  // 1. ประมวลผลเส้นทางบินของเครื่องบิน (ตัดจบเมื่อถูกยิงตก)
   const processedTargetTracks = processAircraftTargetTracks(samples, shotLogs);
 
-  // 3. Group missile trajectories
+  // 2. จัดกลุ่มเส้นทางบินของลูกจรวด
   const missileTrackMap = new Map<
     string,
     Array<{ time: string; lat: number; lon: number; altFt: number; targetId: string; status: string }>
@@ -298,16 +322,16 @@ export function generateUnifiedGPX(
     }
   }
 
-  // 4. Build GPX XML
+  // 3. เริ่มประกอบเอกสาร XML
   let gpx = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="RTAF SAM-1 Simulation System" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
   <metadata>
     <name>RTAF SAM-1 Unified Air Defense Telemetry</name>
-    <desc>Tactical air defense simulation at 4 Hz containing SAM Base, Aircraft Targets, and Missile Engagements</desc>
+    <desc>Tactical air defense simulation containing SAM Base, Aircraft Targets, and Missile Engagements</desc>
     <time>${startTime}</time>
   </metadata>
 
-  <!-- SAM Site Static Battery Marker -->
+  <!-- มาร์กเกอร์จุดที่ตั้งฐานยิง SAM -->
   <wpt lat="${samConfig.baseLat.toFixed(6)}" lon="${samConfig.baseLon.toFixed(6)}">
     <ele>${baseEleM}</ele>
     <name>${escapeXml(samConfig.systemName)} (SAM Base)</name>
@@ -322,7 +346,7 @@ export function generateUnifiedGPX(
   </wpt>
 `;
 
-  // Aircraft Tracks
+  // เส้นทางบินของเครื่องบินทุกลำ
   processedTargetTracks.forEach((data, targetId) => {
     gpx += `  <trk>
     <name>${escapeXml(targetId)} (Aircraft Target)</name>
@@ -352,7 +376,7 @@ ${isDestructionPoint ? `          <event>DESTROYED</event>\n          <status>DE
   </trk>\n`;
   });
 
-  // Missile Trajectories
+  // วิถีการบินของจรวดทุกลูก
   missileTrackMap.forEach((points, missileId) => {
     const targetId = points[0]?.targetId || 'UNKNOWN';
     const finalStatus = points[points.length - 1]?.status || 'UNKNOWN';
@@ -384,9 +408,12 @@ ${isDestructionPoint ? `          <event>DESTROYED</event>\n          <status>DE
 }
 
 /**
- * Exports shot log records to CSV
+ * ส่งออกตารางบันทึกประวัติการยิง (Shot Logs) เป็นไฟล์ CSV สำหรับเปิดใน Microsoft Excel หรือโปรแกรมวิเคราะห์ข้อมูล
+ * @param logs รายการบันทึกการยิง
+ * @returns ข้อความรูปแบบ CSV
  */
 export function exportShotLogsCSV(logs: ShotLogEntry[]): string {
+  // หัวคอลัมน์ของไฟล์ CSV
   const headers = [
     'Shot ID',
     'Launch Time (Local)',
@@ -405,6 +432,7 @@ export function exportShotLogsCSV(logs: ShotLogEntry[]): string {
     'Final Coordinates',
   ];
 
+  // แปลงข้อมูลแต่ละแถวเป็น CSV row
   const rows = logs.map((l) => {
     const initBbb = formatDegree360(l.initialBearingDeg);
     const initRng = Math.round(l.initialRangeNM).toString();
@@ -440,20 +468,32 @@ export function exportShotLogsCSV(logs: ShotLogEntry[]): string {
 }
 
 /**
- * Prompts user browser download of generated text / blob file
+ * สั่งให้เว็บเบราว์เซอร์ดาวน์โหลดไฟล์ข้อความ/ไบนารีลงในเครื่องของผู้ใช้งานทันที
+ * @param content ข้อมูลข้อความที่จะบันทึก
+ * @param fileName ชื่อไฟล์ที่ต้องการบันทึก เช่น 'flight_telemetry.gpx'
+ * @param mimeType ประเภท MIME Type เช่น 'application/gpx+xml', 'text/csv'
  */
 export function triggerFileDownload(content: string, fileName: string, mimeType: string) {
+  // สร้าง Blob ออบเจกต์จากเนื้อหา
   const blob = new Blob([content], { type: mimeType });
+  // สร้าง URL ชั่วคราวในหน่วยความจำ
   const url = URL.createObjectURL(blob);
+  // สร้างแท็ก <a> เพื่อกระตุ้นการดาวน์โหลด
   const a = document.createElement('a');
   a.href = url;
   a.download = fileName;
   document.body.appendChild(a);
   a.click();
+  // ทำความสะอาด DOM และคืนหน่วยความจำ URL
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
+/**
+ * ฟังก์ชันหลีกเลี่ยงอักขระพิเศษสำหรับ XML เพื่อไม่ให้เอกสาร XML พัง (Escape XML Characters)
+ * @param unsafe ข้อความดิบ
+ * @returns ข้อความที่แปลงอักขระ & < > ' " เรียบร้อยแล้ว
+ */
 function escapeXml(unsafe: string): string {
   return unsafe.replace(/[<>&'"]/g, (c) => {
     switch (c) {

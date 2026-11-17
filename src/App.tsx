@@ -1,4 +1,13 @@
+// ========================================================================================
+// ไฟล์: src/App.tsx
+// หน้าที่: คอมโพเนนต์หลักศูนย์บัญชาการยุทธวิธี C2 และระบบจำลองฟิสิกส์การสกัดกั้น (Main Application Root)
+// คำอธิบาย: บริหารจัดการสถานะของระบบ SAM, การนำเข้าและประมวลผลข้อมูลเป้าบิน, การคำนวณการยิงขีปนาวุธแบบ 60FPS,
+//          การบันทึกเทเลเมทรี 10Hz, ตารางบันทึกการยิง, และหน้าต่างโมดัลสั่งการต่างๆ
+// ========================================================================================
+
+// นำเข้า React hooks สำหรับบริหารจัดการ State, Lifecycle, DOM Refs และ Memoized Callbacks
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+// นำเข้าอินเทอร์เฟซโครงสร้างข้อมูลหลักของระบบจำลอง
 import {
   SAMConfig,
   LauncherState,
@@ -9,6 +18,7 @@ import {
   TacticalOverlay,
   SimulationTelemetrySample,
 } from './types/simulation';
+// นำเข้าฟังก์ชันคำนวณทางภูมิศาสตร์ ระยะทาง แบริ่ง และความเร็วการบิน
 import {
   getBearingDeg,
   getDistanceNM,
@@ -19,7 +29,9 @@ import {
   normalizeDegree360,
   formatDegree360,
 } from './utils/geo';
+// นำเข้าค่าคอนฟิกเริ่มต้นและพรีเซ็ตระบบขีปนาวุธ (KS-1C, Spada, Long-Range)
 import { DEFAULT_SAM_CONFIG, SAM_PRESETS } from './utils/presets';
+// นำเข้าฟังก์ชันบันทึกและอ่านข้อมูลจาก LocalStorage
 import {
   saveSAMConfigToStorage,
   loadSAMConfigFromStorage,
@@ -27,7 +39,9 @@ import {
   saveTelemetryBufferToStorage,
   clearAllHistoryFromStorage,
 } from './utils/storage';
+// นำเข้าตัวแยกวิเคราะห์เลเยอร์แผนที่ KML/KMZ หรือ GeoJSON
 import { parseOverlayFile } from './utils/kmlParser';
+// นำเข้าโมดูลสร้างไฟล์ GPX 1.1 สำหรับนำไปเปิดใน Tacview / ACMI
 import {
   generateUnifiedGPX,
   generateAircraftGPX,
@@ -35,12 +49,14 @@ import {
   triggerFileDownload,
 } from './utils/gpxExporter';
 
+// นำเข้าคอมโพเนนต์ย่อยในระบบ
 import { TopHeader } from './components/TopHeader';
 import { RadarScope } from './components/RadarScope';
 import { FiringControlPanel } from './components/FiringControlPanel';
 import { AircraftControlWidget } from './components/AircraftControlWidget';
 import { ShotLogPanel } from './components/ShotLogPanel';
 import { SAMParametersModal } from './components/SAMParametersModal';
+// นำเข้าไอคอนจาก lucide-react
 import {
   ChevronDown,
   ChevronUp,
@@ -60,12 +76,12 @@ import {
 } from 'lucide-react';
 
 export default function App() {
-  // 1. SAM System Configuration State
+  // 1. สเตตเก็บค่าพารามิเตอร์การตั้งค่าระบบ SAM (พิกัดฐานยิง, ความเร็ว, วงแหวนเรดาร์, Bullseye)
   const [samConfig, setSAMConfig] = useState<SAMConfig>(() => {
     return loadSAMConfigFromStorage() || DEFAULT_SAM_CONFIG;
   });
 
-  // 2. Launchers State (with independent reload timers)
+  // 2. สเตตเก็บรายการแท่นยิงขีปนาวุธแต่ละแท่น พร้อมเวลานับถอยหลังการโหลดลูกใหม่ (Launcher Matrix)
   const [launchers, setLaunchers] = useState<LauncherState[]>(() => {
     return Array.from({ length: samConfig.launcherCount }).map((_, idx) => ({
       id: idx + 1,
@@ -77,27 +93,29 @@ export default function App() {
     }));
   });
 
+  // ดัชนีของแท่นยิงถัดไปที่จะเป็นคิวยิง (เริ่มจากแท่นแรก)
   const [nextLauncherIndex, setNextLauncherIndex] = useState<number>(0);
 
-  // 3. Targets and Target Naming Sequence (T1, T2, T3...)
+  // 3. สเตตเก็บรายการเป้าหมายเครื่องบิน (Aircraft Targets) และตัวนับลำดับเป้าหมาย (T1, T2...)
   const [targets, setTargets] = useState<AircraftTarget[]>([]);
   const targetCounterRef = useRef<number>(1);
+  // รหัสเครื่องบินที่กำลังถูกคลิกเลือกอยู่บนจอเรดาร์
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
 
-  // 4. Active Missiles & Visual Effects
+  // 4. สเตตเก็บรายการลูกจรวดขีปนาวุธที่กำลังบิน (Active Missiles) และเอฟเฟกต์ภาพระเบิด
   const [missiles, setMissiles] = useState<ActiveMissile[]>([]);
   const missileCounterRef = useRef<number>(1);
   const [selectedMissileId, setSelectedMissileId] = useState<string | null>(null);
   const [visualEffects, setVisualEffects] = useState<VisualEffect[]>([]);
 
-  // 5. Shot Logs (Reset clean on every program start)
+  // 5. สเตตเก็บประวัติตารางบันทึกการยิงทั้งหมด (Shot Logs)
   const [shotLogs, setShotLogs] = useState<ShotLogEntry[]>([]);
   const shotCounterRef = useRef<number>(1);
 
-  // 6. Tactical Overlays (KML / GeoJSON)
+  // 6. สเตตเก็บชั้นข้อมูลแผนที่ยุทธวิธีที่นำเข้า (Tactical Overlays จาก KML / GeoJSON)
   const [tacticalOverlays, setTacticalOverlays] = useState<TacticalOverlay[]>([]);
 
-  // Synchronized refs to decouple animation loop from React render cycle and ensure real-time accuracy
+  // ใช้ Refs ซิงค์ข้อมูลกับลูปคำนวณ 60FPS เพื่อให้เข้าถึงค่าล่าสุดได้ทันทีโดยไม่ติด Render Cycle
   const targetsRef = useRef<AircraftTarget[]>(targets);
   targetsRef.current = targets;
 
@@ -107,7 +125,7 @@ export default function App() {
   const samConfigRef = useRef<SAMConfig>(samConfig);
   samConfigRef.current = samConfig;
 
-  // 7. Simulation State & 10Hz Telemetry Recording (Reset clean on every program start)
+  // 7. สเตตการรันการจำลองและบัฟเฟอร์บันทึกข้อมูลเทเลเมทรี 10Hz
   const [isSimRunning, setIsSimRunning] = useState<boolean>(false);
   const isSimRunningRef = useRef<boolean>(isSimRunning);
   isSimRunningRef.current = isSimRunning;
@@ -117,7 +135,7 @@ export default function App() {
   const simStartTimeRef = useRef<number | null>(null);
   const lastSampleTimeRef = useRef<number>(0);
 
-  // 8. UI Modals and Layout toggles
+  // 8. สเตตควบคุมการแสดงผลของหน้าต่างโมดัลและแผงควบคุมต่างๆ
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isShotLogExpanded, setIsShotLogExpanded] = useState<boolean>(false);
   const [isFiringPanelOpen, setIsFiringPanelOpen] = useState<boolean>(true);
@@ -125,12 +143,12 @@ export default function App() {
   const [exportSelection, setExportSelection] = useState<'all' | 'aircraft' | 'battery'>('all');
   const [isResetPromptOpen, setIsResetPromptOpen] = useState<boolean>(false);
 
-  // Reset all history data every time the program starts
+  // เคลียร์ข้อมูลประวัติใน LocalStorage ทุกครั้งที่เริ่มเปิดโปรแกรมใหม่
   useEffect(() => {
     clearAllHistoryFromStorage();
   }, []);
 
-  // Synchronize launchers state if config launcher count changes
+  // ซิงโครไนซ์สถานะแท่นยิงเมื่อมีการเปลี่ยนจำนวนแท่นหรือจำนวนลูกต่อแท่นในหน้าการตั้งค่า
   useEffect(() => {
     setLaunchers((prev) => {
       return Array.from({ length: samConfig.launcherCount }).map((_, idx) => {
@@ -155,16 +173,17 @@ export default function App() {
     });
   }, [samConfig.launcherCount, samConfig.missilesPerLauncher, samConfig.launcherReloadTimeSec]);
 
-  // Persist config and logs changes
+  // บันทึกคอนฟิกลง LocalStorage เมื่อมีการเปลี่ยนแปลง
   useEffect(() => {
     saveSAMConfigToStorage(samConfig);
   }, [samConfig]);
 
+  // บันทึกตารางช็อตการยิงลง LocalStorage เมื่อมีรายการใหม่
   useEffect(() => {
     saveShotLogsToStorage(shotLogs);
   }, [shotLogs]);
 
-  // Periodic telemetry backup every 15s to avoid main thread freeze
+  // แบ็กอัปข้อมูลบัฟเฟอร์เทเลเมทรีทุกๆ 15 วินาที
   useEffect(() => {
     const timer = setInterval(() => {
       if (telemetryBufferRef.current.length > 0) {
@@ -174,9 +193,9 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // Helper to determine radar zone at current range
+  // ฟังก์ชันคำนวณชื่อโซนเรดาร์ (Quality of Shot Zone) ณ ระยะทางที่กำหนด
   const getQualityOfShotZone = useCallback((rangeNM: number): string => {
-    // Sort rings ascending by radius
+    // เรียงลำดับวงแหวนจากรัศมีน้อยไปมาก
     const sorted = [...samConfig.radarRings].sort((a, b) => a.radiusNM - b.radiusNM);
     for (const ring of sorted) {
       if (rangeNM <= ring.radiusNM) {
@@ -186,10 +205,11 @@ export default function App() {
     return `Beyond Envelope (> ${sorted[sorted.length - 1]?.radiusNM || 50} NM)`;
   }, [samConfig.radarRings]);
 
-  // Spawn New Target Aircraft
+  // สร้างเป้าหมายเครื่องบินขึ้นมาใหม่ ณ พิกัดที่ระบุ (Spawn Target)
   const handleSpawnTarget = useCallback((lat: number, lon: number) => {
+    // กำหนดรหัสเครื่องบิน เช่น T1, T2
     const id = `T${targetCounterRef.current++}`;
-    // Default orientation: faces directly toward the SAM base
+    // หันหัวเครื่องบินเข้าหาฐานยิง SAM โดยอัตโนมัติเป็นค่าเริ่มต้น
     const bearingToSAM = getBearingDeg(lat, lon, samConfig.baseLat, samConfig.baseLon);
 
     const newTarget: AircraftTarget = {
@@ -208,16 +228,17 @@ export default function App() {
       targetsRef.current = updated;
       return updated;
     });
+    // โฟกัสเลือกเป้าหมายที่เพิ่งสร้างทันที
     setSelectedTargetId(id);
   }, [samConfig]);
 
-  // Quick Spawn Target at default range (~25 NM north-east)
+  // สร้างเป้าหมายบินแบบด่วน (+ TARGET) ณ ระยะ ~25 ไมล์ทะเลทางทิศตะวันออกเฉียงเหนือ
   const handleQuickSpawnTarget = () => {
     const pos = getDestinationLatLon(samConfig.baseLat, samConfig.baseLon, 45, 25);
     handleSpawnTarget(pos.lat, pos.lon);
   };
 
-  // Update Target Position (dragged on map)
+  // อัปเดตพิกัดเป้าหมายเมื่อถูกลากย้ายบนจอเรดาร์
   const handleUpdateTargetPosition = useCallback((id: string, lat: number, lon: number) => {
     setTargets((prev) => {
       const updated = prev.map((t) => (t.id === id ? { ...t, lat, lon } : t));
@@ -226,7 +247,7 @@ export default function App() {
     });
   }, []);
 
-  // Delete Target
+  // ลบเป้าหมายเครื่องบินออกจากระบบ
   const handleDeleteTarget = useCallback((id: string) => {
     setTargets((prev) => {
       const updated = prev.filter((t) => t.id !== id);
@@ -236,32 +257,32 @@ export default function App() {
     if (selectedTargetId === id) setSelectedTargetId(null);
   }, [selectedTargetId]);
 
-  // Clear all targets
+  // ลบเป้าหมายเครื่องบินทั้งหมด
   const handleClearAllTargets = () => {
     setTargets([]);
     setSelectedTargetId(null);
   };
 
-  // Master Reset: Clear all simulation state, targets, missiles, launchers, logs, and telemetry history to start fresh
+  // รีเซ็ตการจำลองและประวัติทั้งหมดเพื่อเริ่มรอบใหม่ (Master Reset)
   const handleResetAll = useCallback(() => {
-    // 1. Stop simulation
+    // 1. หยุดการทำงานของการจำลอง
     setIsSimRunning(false);
     isSimRunningRef.current = false;
     simStartTimeRef.current = null;
     lastSampleTimeRef.current = 0;
 
-    // 2. Clear targets & selection
+    // 2. ล้างเป้าหมายเครื่องบินและตัวเลือก
     setTargets([]);
     setSelectedTargetId(null);
     targetCounterRef.current = 1;
 
-    // 3. Clear active missiles & visual effects
+    // 3. ล้างขีปนาวุธจรวดที่กำลังบินและเอฟเฟกต์ภาพ
     setMissiles([]);
     setSelectedMissileId(null);
     missileCounterRef.current = 1;
     setVisualEffects([]);
 
-    // 4. Reset launchers to full capacity and ready state
+    // 4. รีเซ็ตแท่นยิงขีปนาวุธทุกแท่นให้มีจรวดเต็มความจุและพร้อมยิงทันที
     setLaunchers(
       Array.from({ length: samConfig.launcherCount }).map((_, idx) => ({
         id: idx + 1,
@@ -274,31 +295,31 @@ export default function App() {
     );
     setNextLauncherIndex(0);
 
-    // 5. Clear shot logs & telemetry buffers
+    // 5. ล้างตารางบันทึกการยิงและบัฟเฟอร์เทเลเมทรี
     setShotLogs([]);
     shotCounterRef.current = 1;
     telemetryBufferRef.current = [];
     setSampleCount(0);
     clearAllHistoryFromStorage();
 
-    // 6. Close reset confirmation modal
+    // 6. ปิดหน้าต่างยืนยันการรีเซ็ต
     setIsResetPromptOpen(false);
   }, [samConfig.launcherCount, samConfig.missilesPerLauncher, samConfig.launcherReloadTimeSec]);
 
-  // Fire Action
+  // ฟังก์ชันยิงขีปนาวุธต่อสู้อากาศยาน (FIRE Action)
   const handleFire = () => {
     if (!selectedTargetId) return;
     const target = targets.find((t) => t.id === selectedTargetId);
     if (!target) return;
 
-    // Check active simultaneous limit
+    // ตรวจสอบโควต้าการยิงพร้อมกันสูงสุด (Max Simultaneous Engagements)
     const activeMissilesCount = missiles.filter((m) => m.status === 'IN_FLIGHT').length;
     if (activeMissilesCount >= samConfig.maxSimultaneousEngagements) return;
 
-    // Pick active firing launcher: Fire from current launcher until depleted
+    // เลือกแท่นยิง: ยิงจากแท่นเดิมต่อเนื่องจนกว่าจรวดจะหมด
     let chosenLauncherIdx = nextLauncherIndex;
 
-    // If current launcher is empty or reloading, search for first available launcher
+    // หากแท่นยิงปัจจุบันไม่มีลูกหรือกำลังโหลด ให้ค้นหาแท่นยิงแท่นอื่นที่พร้อม
     if (
       !launchers[chosenLauncherIdx] ||
       launchers[chosenLauncherIdx].missilesRemaining <= 0 ||
@@ -324,7 +345,7 @@ export default function App() {
     const newRemaining = launcher.missilesRemaining - 1;
     const needsReload = newRemaining === 0;
 
-    // Update launcher state
+    // ปรับปรุงสถานะแท่นยิง: หักกระสุนออก 1 นัด และหากหมดให้เริ่มนับถอยหลังโหลดจรวดใหม่
     setLaunchers((prev) =>
       prev.map((l, idx) => {
         if (idx === chosenLauncherIdx) {
@@ -339,7 +360,7 @@ export default function App() {
       })
     );
 
-    // If launcher ran out of missiles, advance to next launcher; otherwise stay on this same launcher!
+    // หากจรวดบนแท่นนี้หมด ให้เลื่อนไปยังแท่นถัดไป หากยังไม่หมดให้อยู่ที่แท่นเดิม
     if (needsReload) {
       let nextAvailable = -1;
       for (let i = 1; i <= launchers.length; i++) {
@@ -354,7 +375,7 @@ export default function App() {
       setNextLauncherIndex(chosenLauncherIdx);
     }
 
-    // Calculate initial engagement parameters
+    // คำนวณพารามิเตอร์การยิงสกัดกั้นเริ่มต้น
     const initBearing = getBearingDeg(samConfig.baseLat, samConfig.baseLon, target.lat, target.lon);
     const initRange = getDistanceNM(samConfig.baseLat, samConfig.baseLon, target.lat, target.lon);
     const initSlant = getSlantRangeNM(initRange, samConfig.baseElevationFt, target.altitudeFt);
@@ -371,7 +392,7 @@ export default function App() {
     const zuluTimeStr = `${zuluHours}:${zuluMins}:${zuluSecs}Z`;
     const targetInitialCoordsStr = `${decimalToDDMM(target.lat, true)}, ${decimalToDDMM(target.lon, false)}`;
 
-    // Immediately record shot in log: every shot fired is counted!
+    // บันทึกช็อตการยิงลงในตารางประวัติทันทีที่กดปุ่มยิง
     const newLogEntry: ShotLogEntry = {
       shotId,
       timestampLocal: localTimeStr,
@@ -395,6 +416,7 @@ export default function App() {
     };
     setShotLogs((prev) => [newLogEntry, ...prev]);
 
+    // สร้างออบเจกต์ลูกจรวด ActiveMissile และปล่อยตัวออกจากฐานยิง
     const newMissile: ActiveMissile = {
       id: missileId,
       launcherId: launcher.id,
@@ -427,12 +449,12 @@ export default function App() {
     setMissiles((prev) => [...prev, newMissile]);
     setSelectedMissileId(missileId);
 
-    // Mark target as engaged
+    // กำหนดสถานะเป้าหมายว่าถูกล็อคเป้าแล้ว (isEngaged = true)
     setTargets((prev) =>
       prev.map((t) => (t.id === target.id ? { ...t, isEngaged: true } : t))
     );
 
-    // If simulation is not started, automatically start simulation so the missile moves!
+    // หากการจำลองยังไม่เริ่ม ให้เริ่มการจำลองอัตโนมัติเพื่อให้จรวดเคลื่อนที่
     if (!isSimRunning) {
       setIsSimRunning(true);
       isSimRunningRef.current = true;
@@ -442,7 +464,7 @@ export default function App() {
     }
   };
 
-  // Terminate Missile Action
+  // คำสั่งทำลายจรวดฉุกเฉิน (Terminate Missile Action)
   const handleTerminateMissile = (targetMissileId?: string) => {
     const missile = missiles.find(
       (m) =>
@@ -451,11 +473,11 @@ export default function App() {
     );
     if (!missile) return;
 
-    // Resolve missile
+    // ประมวลผลผลลัพธ์ให้เป็น TERMINATE
     resolveMissileEngagement(missile, 'TERMINATE');
   };
 
-  // Resolution helper for HIT, MISS, or TERMINATE
+  // ฟังก์ชันสรุปผลการสกัดกั้น (HIT, MISS, หรือ TERMINATE)
   const resolveMissileEngagement = (missile: ActiveMissile, result: 'HIT' | 'MISS' | 'TERMINATE') => {
     const now = new Date();
     const localTimeStr = now.toLocaleTimeString('en-US', { hour12: false });
@@ -468,7 +490,7 @@ export default function App() {
     const finalBearing = getBearingDeg(samConfigRef.current.baseLat, samConfigRef.current.baseLon, missile.currentLat, missile.currentLon);
     const finalRange = getDistanceNM(samConfigRef.current.baseLat, samConfigRef.current.baseLon, missile.currentLat, missile.currentLon);
 
-    // Update existing shot log entry for this missile, or add if missing
+    // ปรับปรุงผลลัพธ์การยิงในตาราง Shot Logs ให้สมบูรณ์
     setShotLogs((prev) => {
       const exists = prev.some((l) => l.missileId === missile.id);
       if (exists) {
@@ -522,7 +544,7 @@ export default function App() {
       ];
     });
 
-    // Add visual effect
+    // สร้างเอฟเฟกต์ภาพ (HIT: ระเบิดสีแดง, MISS: ควันสีเทา, TERMINATE: กากบาทสีส้ม)
     const effectColor = result === 'HIT' ? '#EF4444' : result === 'MISS' ? '#94A3B8' : '#F97316';
     setVisualEffects((prev) => [
       ...prev,
@@ -537,25 +559,25 @@ export default function App() {
       },
     ]);
 
-    // Update missile status
+    // ปรับปรุงสถานะจรวด
     setMissiles((prev) =>
       prev.map((m) => (m.id === missile.id ? { ...m, status: result } : m))
     );
 
-    // If HIT, automatically destroy and remove the aircraft target from the map!
-    // Also, if other missiles were tracking this same target, terminate them with status 'TERMINATE'
+    // หากยิงโดนเป้า (HIT) ให้ทำลายและลบเครื่องบินเป้าหมายออกจากจอเรดาร์ทันที
+    // และหากมีจรวดลูกอื่นที่กำลังมุ่งหน้ามายังเป้าหมายลำเดียวกันนี้ ให้สั่ง TERMINATE จรวดเหล่านั้นทันที
     if (result === 'HIT') {
       targetsRef.current = targetsRef.current.filter((t) => t.id !== missile.targetId);
       setTargets((prev) => prev.filter((t) => t.id !== missile.targetId));
       if (selectedTargetId === missile.targetId) setSelectedTargetId(null);
 
-      // Find any other in-flight missiles tracking the same aircraft
+      // ค้นหาจรวดลูกอื่นที่กำลังบินตามเป้าหมายเดียวกันนี้
       const otherMissiles = missilesRef.current.filter(
         (om) => om.id !== missile.id && om.targetId === missile.targetId && om.status === 'IN_FLIGHT'
       );
 
       if (otherMissiles.length > 0) {
-        // 1. Terminate other missiles in state
+        // 1. อัปเดตสถานะจรวดลูกอื่นให้เป็น TERMINATE
         setMissiles((prev) =>
           prev.map((m) => {
             if (otherMissiles.some((om) => om.id === m.id)) {
@@ -565,7 +587,7 @@ export default function App() {
           })
         );
 
-        // 2. Update shot log entries for other missiles to TERMINATE
+        // 2. อัปเดตบันทึกใน Shot Log ของจรวดลูกอื่น
         setShotLogs((prev) =>
           prev.map((log) => {
             const om = otherMissiles.find((o) => o.id === log.missileId);
@@ -592,7 +614,7 @@ export default function App() {
           })
         );
 
-        // 3. Visual effects for terminated missiles
+        // 3. แสดงเอฟเฟกต์ภาพทำลายตัวเองของจรวดลูกอื่น
         const termEffects: VisualEffect[] = otherMissiles.map((om) => ({
           id: `eff_term_${om.id}_${Date.now()}`,
           lat: om.currentLat,
@@ -605,7 +627,7 @@ export default function App() {
         setVisualEffects((prev) => [...prev, ...termEffects]);
       }
     } else {
-      // Check if other active missiles are still targeting this aircraft
+      // ตรวจสอบว่ายังมีจรวดลูกอื่นเล็งเครื่องบินลำนี้อยู่หรือไม่
       setTargets((prev) =>
         prev.map((t) => {
           if (t.id === missile.targetId) {
@@ -624,7 +646,7 @@ export default function App() {
     }
   };
 
-  // Main Simulation & Kinematics Frame Loop (60 FPS, real-time synchronized)
+  // ลูปประมวลผลฟิสิกส์และการจำลองหลัก 60 FPS (Frame Loop ซิงค์เวลาจริง)
   useEffect(() => {
     let animId: number;
     lastFrameTimeRef.current = performance.now();
@@ -634,10 +656,10 @@ export default function App() {
       const deltaMs = now - lastFrameTimeRef.current;
       lastFrameTimeRef.current = now;
 
-      // Calculate true real seconds elapsed between frames, clamped to max 100ms against background spikes
+      // เวลาจริงที่ผ่านไประหว่างเฟรม (วินาที)
       const dt = Math.max(0, Math.min(deltaMs / 1000, 0.1));
 
-      // 1. Tick Launcher Independent Reload Timers (only if any launcher is reloading)
+      // 1. นับถอยหลังการโหลดลูกใหม่ของแท่นยิง (Reload Countdown Timers)
       if (dt > 0) {
         setLaunchers((prev) => {
           if (!prev.some((l) => l.isReloading)) return prev;
@@ -660,7 +682,7 @@ export default function App() {
         });
       }
 
-      // Clean up old visual effects (only if active effects exist)
+      // ทำความสะอาดเอฟเฟกต์ภาพที่หมดเวลาแสดงผลแล้ว
       const nowMs = Date.now();
       setVisualEffects((prev) => {
         if (prev.length === 0) return prev;
@@ -668,9 +690,9 @@ export default function App() {
         return filtered.length === prev.length ? prev : filtered;
       });
 
-      // If simulation is running and dt > 0, update aircraft positions and active missiles
+      // หากเปิดระบบจำลองและเวลาเดิน (dt > 0) ให้ปรับตำแหน่งเครื่องบินและจรวด
       if (isSimRunningRef.current && dt > 0) {
-        // A. Move active aircraft targets along their heading and speed
+        // ก. ขยับตำแหน่งเป้าบินเครื่องบินตามทิศทาง (Heading) และความเร็วมัค
         setTargets((prevTargets) => {
           if (prevTargets.length === 0) return prevTargets;
           const nextTargets = prevTargets.map((t) => {
@@ -686,7 +708,7 @@ export default function App() {
           return nextTargets;
         });
 
-        // B. Guide active missiles toward their target
+        // ข. นำวิถีจรวดขีปนาวุธเข้าหาเป้าหมาย (Missile Guidance Law)
         setMissiles((prevMissiles) => {
           if (prevMissiles.length === 0 || !prevMissiles.some((m) => m.status === 'IN_FLIGHT')) {
             return prevMissiles;
@@ -700,8 +722,7 @@ export default function App() {
             const newElapsed = m.elapsedSec + dt;
             const newRemainingTOF = Math.max(0, m.timeOfFlightRemainingSec - dt);
 
-            // If target is no longer present (or another missile already hit it in this frame),
-            // terminate this missile immediately!
+            // หากเป้าหมายไม่อยู่แล้วหรือถูกชนไปแล้วในเฟรมนี้ ให้ทำลายจรวดตัวเองทันที
             if (!target || newlyHitTargetIds.has(m.targetId)) {
               setTimeout(() => {
                 resolveMissileEngagement({ ...m, elapsedSec: newElapsed }, 'TERMINATE');
@@ -720,7 +741,7 @@ export default function App() {
 
             const missileStepNM = m.speedMach * MACH_TO_NM_PER_SEC * dt;
 
-            // Check HIT Condition: missile arrives at target within TOF
+            // เงื่อนไขการชนเป้าหมายสำเร็จ (HIT Condition): จรวดเข้าถึงระยะสังหารภายในเวลาบิน
             if (slantRangeNM <= Math.max(missileStepNM * 1.5, 0.15) && newRemainingTOF > 0) {
               newlyHitTargetIds.add(m.targetId);
               targetsRef.current = targetsRef.current.filter((t) => t.id !== m.targetId);
@@ -735,7 +756,7 @@ export default function App() {
               };
             }
 
-            // Check MISS Condition: TOF expired before reaching target
+            // เงื่อนไขการพลาดเป้า (MISS Condition): หมดเวลาเชื้อเพลิงก่อนถึงเป้าหมาย
             if (newRemainingTOF <= 0) {
               setTimeout(() => {
                 resolveMissileEngagement({ ...m, elapsedSec: newElapsed }, 'MISS');
@@ -748,14 +769,14 @@ export default function App() {
               };
             }
 
-            // Move missile towards target
+            // เคลื่อนที่จรวดเข้าหาพิกัดเป้าหมาย
             const nextCoords = getDestinationLatLon(m.currentLat, m.currentLon, brgToTarget, missileStepNM);
 
-            // Interpolate altitude toward target altitude
+            // ปรับระดับความสูงของจรวดให้ไต่ระดับเข้าหาความสูงเป้าหมาย
             const altStep = (target.altitudeFt - m.currentAltFt) * Math.min(dt * 2, 1);
             const nextAltFt = m.currentAltFt + altStep;
 
-            // Sample flight path points at 10 Hz to prevent allocating 60 arrays/sec
+            // สุ่มบันทึกจุดเส้นทางบินด้วยความถี่ 10Hz เพื่อประหยัดหน่วยความจำ
             const lastPt = m.flightPath[m.flightPath.length - 1];
             const shouldAddPt = !lastPt || (Date.now() - lastPt.timestamp >= 100);
             const newFlightPath = shouldAddPt
@@ -784,7 +805,7 @@ export default function App() {
           return nextMissiles;
         });
 
-        // C. 10 Hz Telemetry Sampling (10 times/sec, every 100ms)
+        // ค. บันทึกข้อมูลเทเลเมทรีด้วยความถี่ 10 Hz (ทุก 100 มิลลิวินาที)
         const nowTime = performance.now();
         if (nowTime - lastSampleTimeRef.current >= 100) {
           lastSampleTimeRef.current = nowTime;
@@ -833,7 +854,7 @@ export default function App() {
     return () => cancelAnimationFrame(animId);
   }, []);
 
-  // Start Simulation
+  // เริ่มการจำลอง (START SIMULATION)
   const handleStartSim = () => {
     setIsSimRunning(true);
     isSimRunningRef.current = true;
@@ -842,7 +863,7 @@ export default function App() {
     lastSampleTimeRef.current = performance.now();
   };
 
-  // Stop Simulation & Prompt GPX Export
+  // หยุดการจำลอง (STOP SIMULATION) และเปิดกล่องถามเพื่อดาวน์โหลด GPX
   const handleStopSim = () => {
     setIsSimRunning(false);
     isSimRunningRef.current = false;
@@ -852,11 +873,11 @@ export default function App() {
       return;
     }
 
-    // Open confirmation popup asking whether to save/export GPX instead of automatic download
+    // แสดงหน้าต่างโมดัลสอบถามว่าต้องการบันทึก GPX หรือไม่
     setIsExportPromptOpen(true);
   };
 
-  // Confirm Save GPX File based on user selection: 'all' | 'aircraft' | 'battery'
+  // ยืนยันการบันทึกไฟล์ GPX ตามตัวเลือกที่ผู้ใช้ระบุ: รวมทั้งหมด / เฉพาะเครื่องบิน / เฉพาะฐานและจรวด
   const handleConfirmExportGPX = (modeOverride?: 'all' | 'aircraft' | 'battery') => {
     const mode = modeOverride || exportSelection;
     const timestamp = Date.now();
@@ -875,7 +896,7 @@ export default function App() {
     setIsExportPromptOpen(false);
   };
 
-  // Google Earth KML / KMZ Upload Handler
+  // จัดการการอัปโหลดไฟล์แผนที่ KML / KMZ หรือ GeoJSON
   const handleUploadKml = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -892,12 +913,12 @@ export default function App() {
     reader.readAsText(file);
   };
 
-  // Currently selected target object
+  // เป้าหมายเครื่องบินที่กำลังถูกเลือกในปัจจุบัน
   const selectedTarget = targets.find((t) => t.id === selectedTargetId) || null;
 
   return (
     <div className="flex flex-col h-screen w-screen bg-[#06090e] text-slate-200 overflow-hidden select-none">
-      {/* Top Tactical Command Header */}
+      {/* 1. แถบเครื่องมือและสถานะด้านบนสุด (Top Tactical Command Header) */}
       <TopHeader
         systemName={samConfig.systemName}
         isSimRunning={isSimRunning}
@@ -928,9 +949,9 @@ export default function App() {
         targetCount={targets.length}
       />
 
-      {/* Main Tactical Split Workspace */}
+      {/* 2. พื้นที่ปฏิบัติการหลัก: จอเรดาร์ 2D และแผงควบคุมการยิง */}
       <div className="flex-1 flex flex-col md:flex-row relative overflow-hidden">
-        {/* Center / Primary Stage: 2D Radar Canvas */}
+        {/* จอเรดาร์ตรวจการณ์ 2D Radar PPI Canvas */}
         <div className="flex-1 h-full relative">
           <RadarScope
             samConfig={samConfig}
@@ -946,7 +967,7 @@ export default function App() {
             onDeleteTarget={handleDeleteTarget}
           />
 
-          {/* Collapsed Firing Panel Right Toggle Button */}
+          {/* ปุ่มเปิดแผงควบคุมการยิงเมื่อถูกพับเก็บไว้ */}
           {!isFiringPanelOpen && (
             <button
               onClick={() => setIsFiringPanelOpen(true)}
@@ -962,7 +983,7 @@ export default function App() {
           )}
         </div>
 
-        {/* Right / Side Panel: Firing Operations & Launcher Matrix (Collapsible & Compact for Tablets) */}
+        {/* แผงควบคุมการยิงและสถานะแท่นยิงด้านขวา (Firing Control Panel) */}
         {isFiringPanelOpen && (
           <div className="w-full md:w-64 lg:w-72 p-2 flex flex-col gap-2 bg-slate-950/95 border-t md:border-t-0 md:border-l border-slate-800 overflow-y-auto shrink-0 transition-all duration-300">
             <FiringControlPanel
@@ -981,9 +1002,9 @@ export default function App() {
         )}
       </div>
 
-      {/* Bottom Area: 1. Target Control Panel, 2. Shot Logging Table (Collapsible) */}
+      {/* 3. พื้นที่ด้านล่าง: วิดเจ็ตควบคุมเครื่องบิน และตารางประวัติช็อตการยิง (พับได้) */}
       <div className="bg-slate-950 border-t border-slate-800 flex flex-col z-30 shrink-0">
-        {/* Target Control Panel at Bottom Bar */}
+        {/* วิดเจ็ตควบคุมเครื่องบินเป้าหมาย */}
         {selectedTarget ? (
           <AircraftControlWidget
             target={selectedTarget}
@@ -1035,18 +1056,20 @@ export default function App() {
             activeMissileCount={missiles.filter((m) => m.status === 'IN_FLIGHT').length}
           />
         ) : (
+          /* แถบแจ้งเตือนเมื่อยังไม่ได้เลือกเป้าหมาย พร้อมปุ่มสร้างเป้าหมายด่วน (Quick Spawn Target) */
           <div className="px-4 py-2 bg-slate-950/90 flex flex-wrap items-center justify-between gap-3 font-military text-xs text-slate-400">
             <div className="flex items-center gap-2">
               <Navigation className="w-3.5 h-3.5 text-slate-500" />
               <span className="font-bold text-slate-300">TARGET CONTROL:</span>
               <span className="text-slate-500 text-[11px] hidden sm:inline">
-                No target selected. Double-click radar to deploy aircraft, or click any target on radar to control.
+                ยังไม่ได้เลือกเป้าหมาย — ดับเบิลคลิกบนจอเรดาร์เพื่อปล่อยเครื่องบิน หรือคลิกเป้าหมายบนจอเพื่อควบคุม
               </span>
               <span className="text-slate-500 text-[11px] sm:hidden">
-                No target selected.
+                ยังไม่ได้เลือกเป้าหมาย
               </span>
             </div>
             <div className="flex items-center gap-2">
+              {/* ปุ่มสร้างเป้าหมายด่วนตามค่า Default Spawn ในการตั้งค่า */}
               <button
                 onClick={handleQuickSpawnTarget}
                 className="flex items-center gap-1 px-2.5 py-1 rounded bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-500/40 text-cyan-300 text-xs font-telemetry cursor-pointer transition-colors"
@@ -1058,7 +1081,10 @@ export default function App() {
           </div>
         )}
 
-        {/* Shot Logging Table Tray (Collapsible - Slim 50% height when collapsed) */}
+        {/* =========================================================================
+            แถบหัวข้อตารางบันทึกการยิง (Shot Logging Table Tray)
+            สามารถกดเพื่อย่อ/ขยาย (Collapsible) โดยมีความสูงสลิมลง 50% เมื่อพับเก็บ
+            ========================================================================= */}
         <div
           onClick={() => setIsShotLogExpanded((p) => !p)}
           className={`flex items-center justify-between px-4 sm:px-6 transition-colors select-none group cursor-pointer border-t border-slate-800 ${
@@ -1067,26 +1093,28 @@ export default function App() {
               : 'py-1 bg-slate-900/90 hover:bg-slate-850'
           }`}
         >
+          {/* ส่วนแสดงไอคอน ป้ายชื่อหัวข้อ และตัวนับจำนวนการยิงทั้งหมด */}
           <div className="flex items-center gap-2.5">
             <div className={`rounded bg-slate-800 border border-slate-700/80 text-cyan-400 ${isShotLogExpanded ? 'p-1.5' : 'p-1'}`}>
               <Shield className={isShotLogExpanded ? 'w-4 h-4' : 'w-3.5 h-3.5'} />
             </div>
             <div className="flex items-center gap-2">
               <span className={`font-extrabold tracking-wider text-slate-200 uppercase ${isShotLogExpanded ? 'text-xs sm:text-sm' : 'text-[11px] sm:text-xs'}`}>
-                SHOT LOGGING TABLE & ENGAGEMENT HISTORY
+                ตารางบันทึกการยิงและประวัติการสกัดกั้น (SHOT LOGGING TABLE)
               </span>
+              {/* ป้ายแสดงจำนวนช็อตที่มีการยิงเกิดขึ้นในเซสชัน */}
               <span className="px-1.5 py-0.5 rounded-full bg-cyan-950/80 border border-cyan-500/40 text-cyan-400 text-[10px] font-telemetry font-bold">
                 {shotLogs.length} {shotLogs.length === 1 ? 'SHOT' : 'SHOTS'}
               </span>
             </div>
           </div>
 
+          {/* ส่วนปุ่มย่อ/ขยายแผงประวัติการยิง */}
           <div className="flex items-center gap-2">
-            {/* Slim, elegant Expand/Collapse Button */}
             <button
               type="button"
               onClick={(e) => {
-                e.stopPropagation();
+                e.stopPropagation(); // ป้องกันการเรียก Event ซ้ำซ้อนกับ Container
                 setIsShotLogExpanded((p) => !p);
               }}
               className={`flex items-center gap-1.5 rounded-md font-bold tracking-wider font-military transition-all cursor-pointer shadow-xs ${
@@ -1094,7 +1122,7 @@ export default function App() {
                   ? 'px-3 py-1 text-xs bg-slate-800 hover:bg-slate-750 text-cyan-300 border border-cyan-500/60 shadow-cyan-950/50 hover:scale-[1.01] active:scale-95'
                   : 'px-2.5 py-0.5 text-[11px] bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-black border border-cyan-300 shadow-cyan-950/60 hover:scale-[1.01] active:scale-95'
               }`}
-              title={isShotLogExpanded ? 'Collapse Shot Logging Panel' : 'Expand Shot Logging Panel'}
+              title={isShotLogExpanded ? 'ย่อแผงประวัติการยิง' : 'ขยายแผงประวัติการยิง'}
             >
               <span>{isShotLogExpanded ? 'COLLAPSE LOG' : 'EXPAND LOG'}</span>
               {isShotLogExpanded ? (
@@ -1106,6 +1134,7 @@ export default function App() {
           </div>
         </div>
 
+        {/* แผงตารางประวัติการยิง (ShotLogPanel) เมื่อผู้ใช้งานกดเปิดขยาย */}
         {isShotLogExpanded && (
           <div className="h-[352px] max-h-[60vh] overflow-hidden p-2 bg-slate-950 border-t border-slate-800 shadow-2xl">
             <ShotLogPanel
@@ -1117,7 +1146,11 @@ export default function App() {
         )}
       </div>
 
-      {/* Parameters & Configuration Modal */}
+      {/* =========================================================================
+          หน้าต่างการตั้งค่าพารามิเตอร์ระบบ (SAMParametersModal / SETTING)
+          ใช้กำหนดสเปกจรวด, แท่นยิง, รัศมีเรดาร์, ตำแหน่งแท่นยิง, จุดอ้างอิง Bullseye,
+          และค่าเริ่มต้นการเกิดของเป้าหมายทางอากาศ (Default Aircraft Spawn)
+          ========================================================================= */}
       <SAMParametersModal
         config={samConfig}
         isOpen={isSettingsOpen}
@@ -1125,10 +1158,14 @@ export default function App() {
         onSave={(newCfg) => setSAMConfig(newCfg)}
       />
 
-      {/* Simulation Stop & Export Confirmation Modal */}
+      {/* =========================================================================
+          หน้าต่างยืนยันการบันทึกและส่งออกไฟล์ GPX Telemetry (Export GPX Modal)
+          ให้ผู้ใช้งานเลือกรูปแบบการส่งออก: รวมทั้งหมด, เฉพาะเครื่องบิน, หรือเฉพาะฐานยิงและจรวด
+          ========================================================================= */}
       {isExportPromptOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm font-military select-none">
           <div className="w-full max-w-lg rounded-xl bg-slate-950 border border-slate-800 shadow-2xl p-5 text-slate-200 flex flex-col gap-4">
+            {/* ส่วนหัวหน้าต่างส่งออก GPX */}
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-lg bg-cyan-950/80 border border-cyan-500/50 flex items-center justify-center text-cyan-400">
@@ -1151,7 +1188,7 @@ export default function App() {
               </button>
             </div>
 
-            {/* Quick Metrics Bar */}
+            {/* แถบสรุปตัวชี้วัดความแม่นยำสูง (จำนวนจุดบันทึก 10Hz, จำนวนการยิง, จำนวนเครื่องบิน) */}
             <div className="grid grid-cols-3 gap-2 p-2.5 rounded-lg bg-slate-900/60 border border-slate-800/80 font-telemetry text-center text-xs">
               <div className="flex flex-col">
                 <span className="text-slate-500 text-[10px]">10HZ SAMPLES</span>
@@ -1167,13 +1204,13 @@ export default function App() {
               </div>
             </div>
 
-            {/* 3 Selectable Export Modes */}
+            {/* ตัวเลือกรูปแบบการส่งออกข้อมูล 3 รูปแบบ */}
             <div className="flex flex-col gap-2">
               <label className="text-xs font-bold text-slate-300 uppercase tracking-wider">
                 เลือกข้อมูลที่ต้องการบันทึก (SELECT TRACK EXPORT):
               </label>
 
-              {/* Option 1: รวมกัน (Unified All in One) */}
+              {/* ตัวเลือกที่ 1: รวมกันทั้งหมด (Unified All-in-One: เครื่องบิน + ฐานยิง SAM + จรวดมิสไซล์) */}
               <div
                 onClick={() => setExportSelection('all')}
                 className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
@@ -1201,7 +1238,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Option 2: เครื่องบิน (Aircraft Only) */}
+              {/* ตัวเลือกที่ 2: เฉพาะเป้าหมายทางอากาศ (Aircraft Only) */}
               <div
                 onClick={() => setExportSelection('aircraft')}
                 className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
@@ -1229,7 +1266,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Option 3: ฐานยิงและจรวด (SAM Base & Missiles Only) */}
+              {/* ตัวเลือกที่ 3: เฉพาะฐานยิงและจรวดที่ยิง (SAM Base & Missiles Only) */}
               <div
                 onClick={() => setExportSelection('battery')}
                 className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
@@ -1258,7 +1295,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Modal Actions */}
+            {/* ปุ่มกดยกเลิก หรือ ยืนยันการดาวน์โหลดไฟล์ GPX */}
             <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-800">
               <button
                 onClick={() => setIsExportPromptOpen(false)}
@@ -1278,10 +1315,14 @@ export default function App() {
         </div>
       )}
 
-      {/* Simulation Reset Confirmation Modal */}
+      {/* =========================================================================
+          หน้าต่างยืนยันการล้างข้อมูลเริ่มใหม่ทั้งหมด (Simulation Reset Confirmation Modal)
+          ป้องกันผู้ใช้กดพลาดโดยไม่ตั้งใจ พร้อมแจ้งเตือนสิ่งที่จะถูกลบทั้งหมด
+          ========================================================================= */}
       {isResetPromptOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm font-military select-none">
           <div className="w-full max-w-md rounded-xl bg-slate-950 border border-rose-900/60 shadow-2xl shadow-rose-950/50 p-5 text-slate-200 flex flex-col gap-4 animate-in fade-in duration-150">
+            {/* ส่วนหัวหน้าต่างยืนยันรีเซ็ต */}
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-lg bg-rose-950/80 border border-rose-500/50 flex items-center justify-center text-rose-400">
@@ -1304,6 +1345,7 @@ export default function App() {
               </button>
             </div>
 
+            {/* กล่องข้อความแจ้งเตือนรายละเอียดที่จะถูกเคลีย */}
             <div className="flex items-start gap-3 p-3 rounded-lg bg-rose-950/20 border border-rose-900/40 text-xs">
               <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
               <div className="text-slate-300 leading-relaxed">
@@ -1318,6 +1360,7 @@ export default function App() {
               </div>
             </div>
 
+            {/* ปุ่มกดยกเลิก หรือ ยืนยันการล้างข้อมูลทั้งหมด */}
             <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-800">
               <button
                 onClick={() => setIsResetPromptOpen(false)}
@@ -1339,3 +1382,4 @@ export default function App() {
     </div>
   );
 }
+

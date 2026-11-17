@@ -1,7 +1,19 @@
+// ========================================================================================
+// ไฟล์: src/components/ShotLogPanel.tsx
+// หน้าที่: ตารางบันทึกและแสดงผลประวัติการยิงสกัดกั้นทั้งหมด (Engagement Shot Logging System)
+// คำอธิบาย: แสดงข้อมูลเวลาท้องถิ่น/ซูลู พิกัดเริ่มต้น/สุดท้าย แบริ่ง ระยะทาง ความสูง โซนการยิง (Quality of Shot)
+//          ผลลัพธ์ (HIT, MISS, TERMINATE) พร้อมปุ่มส่งออกข้อมูลเป็น CSV และ JSON
+// ========================================================================================
+
+// นำเข้า React
 import React from 'react';
+// นำเข้าโครงสร้างข้อมูล ShotLogEntry
 import { ShotLogEntry } from '../types/simulation';
+// นำเข้าฟังก์ชันส่งออก CSV และดาวน์โหลดไฟล์
 import { exportShotLogsCSV, triggerFileDownload } from '../utils/gpxExporter';
+// นำเข้าฟังก์ชันคำนวณทางภูมิศาสตร์และการแปลงฟอร์แมต
 import { getBearingDeg, getDistanceNM, getDestinationLatLon, decimalToDDMM, formatFlightLevel, formatDegree360 } from '../utils/geo';
+// นำเข้าไอคอนจากไลบรารี lucide-react
 import {
   FileSpreadsheet,
   FileCode,
@@ -14,19 +26,27 @@ import {
   Radio,
 } from 'lucide-react';
 
+/**
+ * กำหนด Props สำหรับคอมโพเนนต์ ShotLogPanel
+ */
 interface ShotLogPanelProps {
+  /** รายการประวัติช็อตการยิงทั้งหมด */
   logs: ShotLogEntry[];
+  /** ฟังก์ชัน Callback สำหรับล้างประวัติการยิง */
   onClearLogs: () => void;
+  /** พิกัดตำแหน่งฐานยิง SAM (สำหรับคำนวณทิศทาง/ระยะทางสำรอง) */
   samSite?: { lat: number; lon: number };
 }
 
 export const ShotLogPanel: React.FC<ShotLogPanelProps> = ({ logs, onClearLogs, samSite }) => {
+  // ฟังก์ชันส่งออกตารางบันทึกเป็นไฟล์ CSV
   const handleExportCSV = () => {
     if (logs.length === 0) return;
     const csv = exportShotLogsCSV(logs);
     triggerFileDownload(csv, `RTAF_SAM1_Shot_Logs_${Date.now()}.csv`, 'text/csv');
   };
 
+  // ฟังก์ชันส่งออกตารางบันทึกเป็นไฟล์ JSON
   const handleExportJSON = () => {
     if (logs.length === 0) return;
     const jsonStr = JSON.stringify(logs, null, 2);
@@ -35,7 +55,7 @@ export const ShotLogPanel: React.FC<ShotLogPanelProps> = ({ logs, onClearLogs, s
 
   return (
     <div className="flex flex-col h-full rounded-lg bg-slate-950/90 border border-slate-800 shadow-xl overflow-hidden font-military select-none">
-      {/* Header & Export Strip */}
+      {/* 1. แถบหัวข้อตารางและปุ่มดาวน์โหลดรายงาน (CSV / JSON) */}
       <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 bg-slate-900/80 border-b border-slate-800">
         <div className="flex items-center gap-2">
           <Shield className="w-4 h-4 text-cyan-400" />
@@ -45,6 +65,7 @@ export const ShotLogPanel: React.FC<ShotLogPanelProps> = ({ logs, onClearLogs, s
         </div>
 
         <div className="flex items-center gap-2 text-xs">
+          {/* ปุ่มดาวน์โหลดไฟล์ CSV */}
           <button
             onClick={handleExportCSV}
             disabled={logs.length === 0}
@@ -53,6 +74,7 @@ export const ShotLogPanel: React.FC<ShotLogPanelProps> = ({ logs, onClearLogs, s
             <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
             <span>EXPORT CSV</span>
           </button>
+          {/* ปุ่มดาวน์โหลดไฟล์ JSON */}
           <button
             onClick={handleExportJSON}
             disabled={logs.length === 0}
@@ -61,6 +83,7 @@ export const ShotLogPanel: React.FC<ShotLogPanelProps> = ({ logs, onClearLogs, s
             <FileCode className="w-3.5 h-3.5 text-sky-400" />
             <span>EXPORT JSON</span>
           </button>
+          {/* ปุ่มล้างประวัติการยิงทั้งหมด */}
           <button
             onClick={onClearLogs}
             disabled={logs.length === 0}
@@ -72,9 +95,10 @@ export const ShotLogPanel: React.FC<ShotLogPanelProps> = ({ logs, onClearLogs, s
         </div>
       </div>
 
-      {/* Table Content */}
+      {/* 2. เนื้อหาตารางข้อมูลการยิง */}
       <div className="flex-1 overflow-auto">
         {logs.length === 0 ? (
+          // แสดงข้อความเมื่อยังไม่มีการยิงขีปนาวุธ
           <div className="flex flex-col items-center justify-center h-36 text-slate-600 text-xs">
             <Clock className="w-6 h-6 mb-1 text-slate-700" />
             <span>NO SHOTS FIRED YET</span>
@@ -84,6 +108,7 @@ export const ShotLogPanel: React.FC<ShotLogPanelProps> = ({ logs, onClearLogs, s
           </div>
         ) : (
           <table className="w-full text-left text-xs border-collapse">
+            {/* หัวตาราง */}
             <thead className="bg-slate-900/60 sticky top-0 text-[10px] font-bold text-slate-400 border-b border-slate-800 uppercase tracking-wider">
               <tr>
                 <th className="py-2 px-3"># SHOT</th>
@@ -95,6 +120,7 @@ export const ShotLogPanel: React.FC<ShotLogPanelProps> = ({ logs, onClearLogs, s
                 <th className="py-2 px-3">FINAL POSITION</th>
               </tr>
             </thead>
+            {/* รายละเอียดแถวของแต่ละช็อต */}
             <tbody className="divide-y divide-slate-900 font-telemetry">
               {logs.map((log) => {
                 const isHit = log.result === 'HIT';
@@ -102,13 +128,13 @@ export const ShotLogPanel: React.FC<ShotLogPanelProps> = ({ logs, onClearLogs, s
                 const isTerm = log.result === 'TERMINATE';
                 const isInFlight = log.result === 'IN_FLIGHT';
 
-                // 1. Initial Bearing / Range / FL
+                // แบริ่งเริ่มต้น / ระยะทางเริ่มต้น / ระดับความสูงเริ่มต้น (BBB/Range/FL)
                 const initBbb = formatDegree360(log.initialBearingDeg);
                 const initRng = Math.round(log.initialRangeNM).toString();
                 const initFl = formatFlightLevel(log.initialAltitudeFt);
                 const initBrgRngFlLine = `${initBbb}/${initRng}/${initFl}`;
 
-                // Initial Coordinates (Lat Long)
+                // พิกัดเริ่มต้นแบบ DD° MM.MMM' N/E
                 let initCoordsStr = log.initialCoordinates;
                 if (!initCoordsStr) {
                   if (log.initialLat !== undefined && log.initialLon !== undefined) {
@@ -121,7 +147,7 @@ export const ShotLogPanel: React.FC<ShotLogPanelProps> = ({ logs, onClearLogs, s
                   }
                 }
 
-                // 2. Calculate final bearing, range & altitude/FL
+                // คำนวณแบริ่งและระยะทางสุดท้ายเมื่อสิ้นสุดผลการยิง
                 let finalBrg = log.finalBearingDeg;
                 let finalRng = log.finalRangeNM;
                 let finalAlt = log.finalAltitudeFt ?? log.interceptAltFt;
@@ -158,16 +184,20 @@ export const ShotLogPanel: React.FC<ShotLogPanelProps> = ({ logs, onClearLogs, s
 
                 return (
                   <tr key={log.shotId} className="hover:bg-slate-900/40 transition-colors">
+                    {/* หมายเลขช็อต */}
                     <td className="py-2 px-3 font-bold text-slate-300">
                       {log.shotId}
                     </td>
+                    {/* เวลาที่ยิง (ท้องถิ่น / ซูลู) */}
                     <td className="py-2 px-3 text-[11px] text-slate-400 whitespace-nowrap">
                       <div>LOC: {log.timestampLocal}</div>
                       <div className="text-cyan-400 font-bold">Z: {log.timestampZulu}</div>
                     </td>
+                    {/* รหัสเป้าหมาย */}
                     <td className="py-2 px-3 font-bold text-rose-400">
                       {log.targetName}
                     </td>
+                    {/* แบริ่ง ระยะทาง ความสูง และพิกัดเริ่มต้น */}
                     <td className="py-2 px-3 whitespace-nowrap">
                       <div className="flex flex-col">
                         <div className="text-cyan-300 font-bold font-military text-[11px] leading-tight mb-0.5">
@@ -178,11 +208,13 @@ export const ShotLogPanel: React.FC<ShotLogPanelProps> = ({ logs, onClearLogs, s
                         </div>
                       </div>
                     </td>
+                    {/* โซนการยิง (Quality of Shot) */}
                     <td className="py-2 px-3">
                       <span className="px-1.5 py-0.5 rounded text-[10px] font-military font-semibold bg-cyan-950/80 border border-cyan-600/40 text-cyan-300">
                         {log.qualityOfShot}
                       </span>
                     </td>
+                    {/* ผลการยิงและเวลาที่เสร็จสิ้น */}
                     <td className="py-2 px-3 whitespace-nowrap">
                       <div className="flex flex-col text-[11px]">
                         <div className="flex items-center gap-1.5 font-military font-bold">
@@ -227,6 +259,7 @@ export const ShotLogPanel: React.FC<ShotLogPanelProps> = ({ logs, onClearLogs, s
                         )}
                       </div>
                     </td>
+                    {/* พิกัดสุดท้ายเมื่อสิ้นสุดผลการยิง */}
                     <td className="py-2 px-3 whitespace-nowrap">
                       <div className="flex flex-col">
                         {finalBrgRngFlLine ? (

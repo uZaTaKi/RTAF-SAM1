@@ -1,4 +1,13 @@
+// ========================================================================================
+// ไฟล์: src/components/TopHeader.tsx
+// หน้าที่: คอมโพเนนต์แถบเมนูด้านบนสุดของโปรแกรม (Command & Control Top Header Bar)
+// คำอธิบาย: แสดงชื่อระบบ C2, นาฬิกาเวลาท้องถิ่น (LOC) และเวลาสากลซูลู (ZULU), ปุ่มเริ่ม/หยุดจำลอง,
+//          ปุ่มสร้างเป้าบินด่วน (+TARGET), ปุ่มนำเข้า/ล้างแผนที่ KML, ปุ่มเปิดการตั้งค่า (SETTING) และปุ่มรีเซ็ตระบบ
+// ========================================================================================
+
+// นำเข้า React hooks พื้นฐาน
 import React, { useState, useEffect } from 'react';
+// นำเข้าไอคอนจากไลบรารี lucide-react
 import {
   Play,
   Square,
@@ -12,20 +21,37 @@ import {
   RotateCcw,
 } from 'lucide-react';
 
+/**
+ * กำหนด Props สำหรับคอมโพเนนต์ TopHeader
+ */
 interface TopHeaderProps {
+  /** ชื่อระบบขีปนาวุธที่กำลังใช้งานอยู่ เช่น 'RTAF KS-1C (HQ-12)' */
   systemName: string;
+  /** สถานะการจำลองว่ากำลังรันบันทึกข้อมูลอยู่หรือไม่ */
   isSimRunning: boolean;
+  /** จำนวนตัวอย่างเทเลเมทรีที่บันทึกไว้ในบัฟเฟอร์ */
   sampleCount: number;
+  /** ฟังก์ชัน Callback เมื่อกดปุ่ม START SIMULATION */
   onStartSim: () => void;
+  /** ฟังก์ชัน Callback เมื่อกดปุ่ม STOP SIMULATION */
   onStopSim: () => void;
+  /** ฟังก์ชัน Callback เมื่อกดปุ่มส่งออกไฟล์ GPX แบบแมนนวล */
   onExportGpx?: () => void;
+  /** ฟังก์ชัน Callback สำหรับรีเซ็ตประวัติและเป้าหมายทั้งหมด */
   onResetAll?: () => void;
+  /** ฟังก์ชัน Callback สำหรับล้างชั้นข้อมูลเส้นแผนที่ KML/KMZ */
   onClearKmlOverlays?: () => void;
+  /** จำนวนชั้นข้อมูลแผนที่ KML ที่โหลดอยู่ในระบบ */
   overlayCount?: number;
+  /** ฟังก์ชัน Callback สำหรับเปิดหน้าต่างตั้งค่าพารามิเตอร์ระบบ (SETTING) */
   onOpenSettings: () => void;
+  /** ฟังก์ชัน Callback เมื่อผู้ใช้อัปโหลดไฟล์ KML/KMZ หรือ GeoJSON */
   onUploadKml: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  /** ฟังก์ชัน Callback สำหรับสร้างเป้าหมายเครื่องบินแบบด่วน */
   onQuickSpawnTarget: () => void;
+  /** ฟังก์ชัน Callback สำหรับลบเป้าหมายเครื่องบินทั้งหมด */
   onClearTargets: () => void;
+  /** จำนวนเป้าหมายเครื่องบินที่มีอยู่ในจอเรดาร์ปัจจุบัน */
   targetCount: number;
 }
 
@@ -45,15 +71,19 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
   onClearTargets,
   targetCount,
 }) => {
+  // สเตตสำหรับเก็บค่าเวลาปัจจุบัน ทั้งเวลาท้องถิ่น (Local) และเวลาสากลซูลู (Zulu)
   const [currentTime, setCurrentTime] = useState<{ local: string; zulu: string }>({
     local: '',
     zulu: '',
   });
 
+  // ใช้ useEffect สำหรับอัปเดตเวลานาฬิกาแบบเรียลไทม์ทุกๆ 1 วินาที
   useEffect(() => {
     const updateClock = () => {
       const now = new Date();
+      // จัดรูปแบบเวลาท้องถิ่นแบบ 24 ชั่วโมง
       const localStr = now.toLocaleTimeString('en-US', { hour12: false });
+      // จัดรูปแบบเวลามาตรฐานซูลู (UTC)
       const zuluHours = now.getUTCHours().toString().padStart(2, '0');
       const zuluMins = now.getUTCMinutes().toString().padStart(2, '0');
       const zuluSecs = now.getUTCSeconds().toString().padStart(2, '0');
@@ -63,14 +93,17 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
       });
     };
 
+    // เรียกทำงานทันทีที่คอมโพเนนต์ถูกเรนเดอร์
     updateClock();
+    // ตั้งเวลา interval อัปเดตทุก 1000 มิลลิวินาที (1 วินาที)
     const timer = setInterval(updateClock, 1000);
+    // คืนหน่วยความจำเมื่อคอมโพเนนต์ถูก unmount
     return () => clearInterval(timer);
   }, []);
 
   return (
     <header className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 bg-slate-950 border-b border-slate-800 text-slate-200 font-military shadow-md select-none">
-      {/* Brand & C2 System Title */}
+      {/* 1. โลโก้และชื่อระบบจำลอง C2 กองทัพอากาศ */}
       <div className="flex items-center gap-3">
         <div className="w-8 h-8 rounded bg-cyan-950 border border-cyan-500/50 flex items-center justify-center text-cyan-400 font-bold shadow-xs shadow-cyan-500/30">
           <Crosshair className="w-5 h-5 text-cyan-400" />
@@ -90,7 +123,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
         </div>
       </div>
 
-      {/* Clocks & 10Hz Status */}
+      {/* 2. ส่วนแสดงนาฬิกาเวลาท้องถิ่น (LOC) และเวลาสากลซูลู (ZULU) */}
       <div className="flex items-center gap-4 bg-slate-900/60 px-3 py-1.5 rounded border border-slate-800 font-telemetry text-xs">
         <div className="flex items-center gap-1.5">
           <Clock className="w-3.5 h-3.5 text-slate-400" />
@@ -104,9 +137,9 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
         </div>
       </div>
 
-      {/* Primary Action Controls */}
+      {/* 3. ปุ่มควบคุมหลักของแถบเครื่องมือ */}
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        {/* Simulation Run / Stop Recording Button */}
+        {/* ปุ่มเริ่มหรือหยุดการจำลอง (START / STOP SIMULATION) */}
         {!isSimRunning ? (
           <button
             onClick={onStartSim}
@@ -125,7 +158,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
           </button>
         )}
 
-        {/* Optional explicit GPX export button when not running and has data */}
+        {/* ปุ่มส่งออกไฟล์ GPX แบบแมนนวลเมื่อหยุดการจำลองและมีข้อมูลในบัฟเฟอร์ */}
         {!isSimRunning && sampleCount > 0 && onExportGpx && (
           <button
             onClick={onExportGpx}
@@ -139,7 +172,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
 
         <div className="w-[1px] h-4 bg-slate-800 hidden sm:block" />
 
-        {/* Quick Spawn Target */}
+        {/* ปุ่มสร้างเป้าหมายบินแบบด่วน (+ TARGET) */}
         <button
           onClick={onQuickSpawnTarget}
           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 transition-colors"
@@ -149,7 +182,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
           <span>+ TARGET</span>
         </button>
 
-        {/* Upload KML / KMZ Overlay */}
+        {/* ปุ่มอัปโหลดเลเยอร์แผนที่ KML / KMZ หรือ GeoJSON */}
         <label
           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 cursor-pointer transition-colors"
           title="Upload Google Earth KML / KMZ or GeoJSON drawings"
@@ -164,7 +197,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
           />
         </label>
 
-        {/* Clear KML / KMZ Overlays Button */}
+        {/* ปุ่มล้างเส้นแผนที่ KML / KMZ ที่โหลดไว้ */}
         <button
           onClick={onClearKmlOverlays}
           disabled={!overlayCount || overlayCount === 0}
@@ -188,7 +221,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
           ) : null}
         </button>
 
-        {/* System Settings Button */}
+        {/* ปุ่มเปิดหน้าต่างตั้งค่าระบบและจุด Bullseye (SETTING) */}
         <button
           onClick={onOpenSettings}
           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-cyan-300 transition-colors"
@@ -198,7 +231,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
           <span>SETTING</span>
         </button>
 
-        {/* Reset Simulation & History to Start Fresh */}
+        {/* ปุ่มรีเซ็ตระบบและข้อมูลการยิงทั้งหมดเพื่อเริ่มรอบใหม่ (RESET) */}
         {onResetAll && (
           <button
             onClick={onResetAll}
@@ -210,7 +243,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
           </button>
         )}
 
-        {/* Clear Targets */}
+        {/* ปุ่มลบเป้าหมายเครื่องบินทั้งหมดออกจากจอเรดาร์ */}
         {targetCount > 0 && (
           <button
             onClick={onClearTargets}

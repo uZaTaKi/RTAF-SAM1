@@ -1,4 +1,15 @@
+// ========================================================================================
+// ไฟล์: src/components/RadarScope.tsx
+// หน้าที่: จอเรดาร์ตรวจการณ์และควบคุมการยิง (Tactical Radar PPI Scope Canvas)
+// คำอธิบาย: เรนเดอร์เส้นใยแมงมุมวัดองศา (Graticule 001-360°), วงแหวนแสดงระยะเรดาร์ (Radar Rings),
+//          จุดอ้างอิงทางยุทธวิธี Bullseye (B.E.), เลเยอร์แผนที่ KML, เป้าบินเครื่องบิน (Aircraft Tag กึ่งโปร่งใส),
+//          วิถีการบินจรวด SAM (Dotted Trail), เอฟเฟกต์การระเบิดสกัดกั้น (HIT/MISS/TERMINATE),
+//          และรองรับการสัมผัส Gesture บน iPad / iPhone (1-นิ้ว Pan, 2-นิ้ว Pinch Zoom)
+// ========================================================================================
+
+// นำเข้า React hooks
 import React, { useRef, useEffect, useState, useCallback } from 'react';
+// นำเข้าโครงสร้างข้อมูลทางยุทธวิธี
 import {
   SAMConfig,
   AircraftTarget,
@@ -6,6 +17,7 @@ import {
   VisualEffect,
   TacticalOverlay,
 } from '../types/simulation';
+// นำเข้าฟังก์ชันคำนวณทางภูมิศาสตร์และแปลงรูปแบบตัวเลข
 import {
   getDistanceNM,
   getBearingDeg,
@@ -15,6 +27,7 @@ import {
   normalizeDegree360,
   formatDegree360,
 } from '../utils/geo';
+// นำเข้าไอคอนจาก lucide-react
 import {
   Crosshair,
   ZoomIn,
@@ -24,17 +37,31 @@ import {
   Trash2,
 } from 'lucide-react';
 
+/**
+ * กำหนด Props สำหรับคอมโพเนนต์ RadarScope
+ */
 interface RadarScopeProps {
+  /** การตั้งค่าระบบ SAM */
   samConfig: SAMConfig;
+  /** รายการเป้าบินเครื่องบิน */
   targets: AircraftTarget[];
+  /** รายการจรวดที่กำลังบิน */
   missiles: ActiveMissile[];
+  /** รายการเอฟเฟกต์ภาพ (ระเบิด ช็อคเวฟ) */
   visualEffects: VisualEffect[];
+  /** รายการเลเยอร์แผนที่ยุทธวิธี KML / GeoJSON */
   tacticalOverlays: TacticalOverlay[];
+  /** รหัสเครื่องบินที่ถูกคลิกเลือกอยู่ */
   selectedTargetId: string | null;
+  /** คีย์ตรวจจับการเปลี่ยนขนาดเลย์เอาต์เพื่อป้องกันจอเบี้ยว */
   layoutKey?: string;
+  /** ฟังก์ชัน Callback เมื่อเลือก/ยกเลิกเลือกเป้าหมาย */
   onSelectTarget: (id: string | null) => void;
+  /** ฟังก์ชัน Callback สำหรับสร้างเป้าบินใหม่ ณ พิกัดที่กำหนด */
   onSpawnTarget: (lat: number, lon: number) => void;
+  /** ฟังก์ชัน Callback เมื่อลากย้ายตำแหน่งเป้าหมาย */
   onUpdateTargetPosition: (id: string, lat: number, lon: number) => void;
+  /** ฟังก์ชัน Callback เมื่อลบเป้าหมาย */
   onDeleteTarget: (id: string) => void;
 }
 
@@ -51,24 +78,27 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
   onUpdateTargetPosition,
   onDeleteTarget,
 }) => {
+  // ตัวอ้างอิง DOM ของคอนเทนเนอร์และ Canvas
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Exact container dimensions to prevent aspect ratio distortion during panel toggles/resizing
+  // สเตตเก็บขนาดกว้างxสูงของคอนเทนเนอร์ เพื่อปรับความละเอียด Canvas ให้คมชัดและไม่เบี้ยว
   const [dimensions, setDimensions] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
 
-  // Viewport transforms (center offset in NM relative to SAM site)
+  // ระยะการเลื่อนแผนที่ (Pan Offset) หน่วยเป็นไมล์ทะเล NM เทียบกับจุดกึ่งกลางฐาน SAM
   const [centerOffsetNM, setCenterOffsetNM] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [zoomScale, setZoomScale] = useState<number>(1.0); // 1.0 means outer ring fits canvas nicely
+  // อัตราการซูมขยายแผนที่ (1.0 = พอดีวงแหวนนอกสุด)
+  const [zoomScale, setZoomScale] = useState<number>(1.0);
+  // สวิตช์เปิด/ปิดการแสดงผลเลเยอร์แผนที่ KML
   const [showOverlays, setShowOverlays] = useState<boolean>(true);
 
-  // Touch gesture refs for iPad & iPhone
+  // ตัวอ้างอิงสำหรับตรวจจับ Gesture สัมผัสบนหน้าจอ iPad และ iPhone
   const pinchStartDistRef = useRef<number | null>(null);
   const pinchStartZoomRef = useRef<number>(1.0);
   const touchMovedRef = useRef<boolean>(false);
   const lastTouchTapTimeRef = useRef<number>(0);
 
-  // Mouse / Touch interaction HUD state
+  // สเตตเก็บข้อมูลกล่อง HUD ลอยตามตำแหน่งเคอร์เซอร์เมาส์/นิ้วสัมผัส
   const [cursorInfo, setCursorInfo] = useState<{
     visible: boolean;
     screenX: number;
@@ -85,12 +115,13 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     rangeKm: 0,
   });
 
+  // ตัวแปรอ้างอิงตรวจจับการลากเลื่อนแผนที่ (Panning) และการลากย้ายเครื่องบิน
   const isPanningRef = useRef<boolean>(false);
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const draggedTargetIdRef = useRef<string | null>(null);
   const beImgRef = useRef<HTMLImageElement | null>(null);
 
-  // Preload Bullseye roundel symbol image
+  // โหลดรูปภาพสัญลักษณ์ล่วงหน้า (ถ้ามี)
   useEffect(() => {
     const img = new Image();
     img.src = '/assets/aistudio/image_62445c87.png';
@@ -99,24 +130,24 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     };
   }, []);
 
-  // Bullseye active state and reference coordinates for BRA
+  // ตรวจสอบว่าระบบเปิดใช้งานจุดอ้างอิง Bullseye (B.E.) หรือไม่
   const isBeActive = Boolean(
     samConfig.bullseyeEnabled &&
     samConfig.bullseyeLat !== undefined &&
     samConfig.bullseyeLon !== undefined
   );
+  // พิกัดจุดอ้างอิงสำหรับคำนวณแบริ่งและระยะทาง (B.E. หากเปิดใช้งาน, หรือฐานยิง SAM หากปิด)
   const refLat = isBeActive ? samConfig.bullseyeLat! : samConfig.baseLat;
   const refLon = isBeActive ? samConfig.bullseyeLon! : samConfig.baseLon;
 
-  // Maximum outer ring radius
+  // คำนวณรัศมีวงแหวนนอกสุดเพื่อคำนวณสเกลของจอเรดาร์
   const maxRadiusNM = Math.max(
     ...samConfig.radarRings.map((r) => r.radiusNM),
     samConfig.timeOfFlightSec * (samConfig.missileSpeedMach * 0.18374) * 0.8,
     45
   );
 
-  // Coordinate Conversion helper:
-  // Converts (lat, lon) to canvas pixel (x, y) relative to SAM Site and centerOffsetNM
+  // ฟังก์ชันแปลงพิกัดภูมิศาสตร์ (lat, lon) เป็นพิกัดพิกเซลบน Canvas (x, y)
   const geoToPixel = useCallback(
     (lat: number, lon: number, width: number, height: number): { x: number; y: number } => {
       const centerX = width / 2;
@@ -124,22 +155,20 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       const maxDim = Math.min(width, height) * 0.44;
       const pixelsPerNM = (maxDim / maxRadiusNM) * zoomScale;
 
-      // Approximate flat tangent plane projection in NM around SAM Site
-      // 1 degree latitude = 60 NM
-      // 1 degree longitude = 60 * cos(lat) NM
+      // การฉายระนาบสัมผัสแบนราบ (Flat Tangent Plane Projection) รอบฐาน SAM
       const meanLatRad = (samConfig.baseLat * Math.PI) / 180;
       const dLatNM = (lat - samConfig.baseLat) * 60;
       const dLonNM = (lon - samConfig.baseLon) * 60 * Math.cos(meanLatRad);
 
       const screenX = centerX + (dLonNM - centerOffsetNM.x) * pixelsPerNM;
-      const screenY = centerY - (dLatNM - centerOffsetNM.y) * pixelsPerNM; // Y is inverted in canvas
+      const screenY = centerY - (dLatNM - centerOffsetNM.y) * pixelsPerNM;
 
       return { x: screenX, y: screenY };
     },
     [samConfig.baseLat, samConfig.baseLon, centerOffsetNM, zoomScale, maxRadiusNM]
   );
 
-  // Converts canvas pixel (x, y) back to geo (lat, lon)
+  // ฟังก์ชันแปลงพิกัดพิกเซลบน Canvas (x, y) กลับเป็นพิกัดภูมิศาสตร์ (lat, lon)
   const pixelToGeo = useCallback(
     (pixelX: number, pixelY: number, width: number, height: number): { lat: number; lon: number } => {
       const centerX = width / 2;
@@ -159,17 +188,16 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     [samConfig.baseLat, samConfig.baseLon, centerOffsetNM, zoomScale, maxRadiusNM]
   );
 
-  // Recenter map back to SAM base
+  // ฟังก์ชันปรับมุมมองแผนที่ให้กลับมาตรงกลางที่ฐานยิง SAM
   const handleRecenter = () => {
     setCenterOffsetNM({ x: 0, y: 0 });
     setZoomScale(1.0);
   };
 
-  // Keyboard Delete target
+  // ดักจับปุ่ม Delete / Backspace เพื่อลบเครื่องบินที่เลือก
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedTargetId) {
-        // Prevent deleting if focus is on an input or textarea
         const activeTag = document.activeElement?.tagName.toLowerCase();
         if (activeTag === 'input' || activeTag === 'textarea') return;
         onDeleteTarget(selectedTargetId);
@@ -179,7 +207,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedTargetId, onDeleteTarget]);
 
-  // Synchronize canvas buffer resolution with exact container size
+  // ซิงค์ขนาดบัฟเฟอร์ Canvas กับขนาดคอนเทนเนอร์จริง
   const checkAndResizeCanvas = useCallback(() => {
     const container = containerRef.current;
     const canvas = canvasRef.current;
@@ -203,7 +231,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     setDimensions((prev) => (prev.width === w && prev.height === h ? prev : { width: w, height: h }));
   }, []);
 
-  // Monitor container size changes continuously via ResizeObserver
+  // เฝ้าติดตามการเปลี่ยนขนาดหน้าจอด้วย ResizeObserver
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -225,8 +253,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     };
   }, [checkAndResizeCanvas]);
 
-  // When layoutKey changes (e.g. Firing panel toggled, Shot log expanded, or target panel open/close),
-  // continuously update canvas dimensions across the 300ms CSS flex transition
+  // ป้องกันภาพเบี้ยวชั่วขณะเมื่อเปิด/ปิดแผงข้าง (Layout Animation Smoothing)
   useEffect(() => {
     const start = performance.now();
     let animId: number;
@@ -242,7 +269,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     return () => cancelAnimationFrame(animId);
   }, [layoutKey, checkAndResizeCanvas]);
 
-  // Prevent default touch gestures (iOS document pinch-zoom / bounce) on radar canvas
+  // ป้องกันค่าเริ่มต้นของเบราว์เซอร์ในการเลื่อนหน้าจอเวลาสัมผัสบน iOS/iPad
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -259,7 +286,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     };
   }, []);
 
-  // Main Canvas Rendering Loop
+  // ลูปหลักในการวาดองค์ประกอบเรดาร์บน Canvas 2D
   useEffect(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
@@ -267,7 +294,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Handle high DPI displays with exact container dimensions
+    // คำนวณพิกเซลตาม High-DPI Display
     const rect = container.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     const width = Math.floor(rect.width);
@@ -286,7 +313,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     ctx.save();
     ctx.scale(dpr, dpr);
 
-    // 1. Clear & Dark Background
+    // 1. ล้างจอและลงสีพื้นหลังสีดำของกล้องสโคปเรดาร์
     ctx.fillStyle = '#06090e';
     ctx.fillRect(0, 0, width, height);
 
@@ -295,7 +322,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     const maxDim = Math.min(width, height) * 0.44;
     const pixelsPerNM = (maxDim / maxRadiusNM) * zoomScale;
 
-    // 2. Tactical Graticule: Radial spokes every 30 degrees (centered at Bullseye if active, SAM base if not)
+    // 2. เส้นใยแมงมุมวัดองศา (Radial Spokes) ทุก 30 องศา (จุดกำเนิดอยู่ที่ Bullseye หากเปิดใช้ หรือฐานยิง SAM หากปิด)
     const graticuleOriginPixel = isBeActive && bePixel ? bePixel : samPixel;
     ctx.save();
     ctx.translate(graticuleOriginPixel.x, graticuleOriginPixel.y);
@@ -303,7 +330,6 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     ctx.strokeStyle = isBeActive ? 'rgba(245, 158, 11, 0.16)' : 'rgba(6, 182, 212, 0.12)';
     ctx.lineWidth = 1;
 
-    // Generous spoke length to span across the screen even if BE is offset
     const spokeLength = Math.max(width, height) * 1.6;
 
     for (let deg = 30; deg <= 360; deg += 30) {
@@ -313,7 +339,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       ctx.lineTo(Math.cos(rad) * spokeLength, Math.sin(rad) * spokeLength);
       ctx.stroke();
 
-      // Degree label at outer edge (001-360)
+      // ตัวเลขกำกับองศา (001-360)
       const labelDist = maxRadiusNM * 1.05 * pixelsPerNM;
       const lx = Math.cos(rad) * labelDist;
       const ly = Math.sin(rad) * labelDist;
@@ -325,7 +351,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       ctx.fillText(`${formatDegree360(deg)}°`, lx, ly);
     }
 
-    // Secondary 15 degree tick marks at outer boundary
+    // ขีดบอกองศาย่อยทุก 15 องศา
     for (let deg = 15; deg <= 360; deg += 15) {
       if (deg % 30 === 0) continue;
       const rad = ((deg - 90) * Math.PI) / 180;
@@ -338,14 +364,13 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     }
     ctx.restore();
 
-    // 3. Render Concentric Radar Capability Rings
-    // Sort rings descending so inner rings don't get covered
+    // 3. วาดวงแหวนระยะตรวจจับเรดาร์และขอบเขตขีดความสามารถการยิง (Radar Rings)
     const sortedRings = [...samConfig.radarRings].sort((a, b) => b.radiusNM - a.radiusNM);
 
     for (const ring of sortedRings) {
       const ringPixelRadius = ring.radiusNM * pixelsPerNM;
 
-      // Filled translucent zone
+      // พื้นหลังสีโปร่งแสงของแต่ละโซน
       ctx.beginPath();
       ctx.arc(samPixel.x, samPixel.y, ringPixelRadius, 0, Math.PI * 2);
       ctx.fillStyle = ring.color;
@@ -353,14 +378,14 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       ctx.fill();
       ctx.globalAlpha = 1.0;
 
-      // Ring boundary line
+      // เส้นขอบวงแหวนแบบประ
       ctx.strokeStyle = ring.color;
       ctx.lineWidth = 1.5;
       ctx.setLineDash([4, 3]);
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Ring Name & Radius Tag (placed at 45° northeast)
+      // ป้ายชื่อวงแหวนและระยะทาง (วางเฉียง 45 องศาทิศตะวันออกเฉียงเหนือ)
       const tagAngleRad = ((45 - 90) * Math.PI) / 180;
       const tagX = samPixel.x + Math.cos(tagAngleRad) * ringPixelRadius;
       const tagY = samPixel.y + Math.sin(tagAngleRad) * ringPixelRadius;
@@ -372,7 +397,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       ctx.fillText(`${ring.radiusNM} NM - ${ring.name}`, tagX + 6, tagY - 2);
     }
 
-    // 4. Render Google Earth Drawings / Overlays (KML / GeoJSON)
+    // 4. วาดชั้นข้อมูลแผนที่ยุทธวิธี (KML / GeoJSON Overlays)
     if (showOverlays && tacticalOverlays.length > 0) {
       for (const overlay of tacticalOverlays) {
         for (const f of overlay.features) {
@@ -424,17 +449,16 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       }
     }
 
-
-    // 6. Active Missiles and Dotted Trajectory Trails
+    // 5. วาดจรวดที่กำลังบินและเส้นทางบินแบบประ (Missiles & Dotted Trajectories)
     for (const missile of missiles) {
       if (missile.status !== 'IN_FLIGHT') continue;
 
-      // Draw continuous dotted trajectory line from launch site
+      // วาดเส้นประแสดงวิถีการบินตั้งแต่จุดยิง
       if (missile.flightPath && missile.flightPath.length > 0) {
         ctx.beginPath();
-        ctx.strokeStyle = '#F59E0B'; // Amber missile line
+        ctx.strokeStyle = '#F59E0B'; // สีส้มอำพัน
         ctx.lineWidth = 2;
-        ctx.setLineDash([3, 4]); // Dotted trail
+        ctx.setLineDash([3, 4]); // เส้นประ
 
         for (let i = 0; i < missile.flightPath.length; i++) {
           const pt = missile.flightPath[i];
@@ -446,16 +470,16 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
         ctx.setLineDash([]);
       }
 
-      // Draw missile current icon: larger circular dot with glow
+      // วาดไอคอนหัวจรวด
       const missilePixel = geoToPixel(missile.currentLat, missile.currentLon, width, height);
 
-      // Outer glow ring
+      // วงแหวนเรืองแสงรอบหัวจรวด
       ctx.beginPath();
       ctx.arc(missilePixel.x, missilePixel.y, 8, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(245, 158, 11, 0.25)';
       ctx.fill();
 
-      // Main circular dot
+      // จุดกลมหลักของจรวด
       ctx.beginPath();
       ctx.arc(missilePixel.x, missilePixel.y, 4.5, 0, Math.PI * 2);
       ctx.fillStyle = '#F59E0B';
@@ -464,7 +488,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       ctx.lineWidth = 1.5;
       ctx.stroke();
 
-      // Missile label: M-1 (TOF: 24s)
+      // ป้ายชื่อจรวดและเวลานับถอยหลังถึงเป้าหมาย
       ctx.fillStyle = '#FCD34D';
       ctx.font = '10px "JetBrains Mono", monospace';
       ctx.textAlign = 'left';
@@ -475,7 +499,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       );
     }
 
-    // 7. Visual Impact / Splash / Terminate Effects
+    // 6. วาดเอฟเฟกต์ภาพเมื่อเกิดการระเบิด ชนเป้าหมาย หรือยุติการบิน
     const now = Date.now();
     for (const eff of visualEffects) {
       const elapsed = now - eff.timestamp;
@@ -485,7 +509,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
 
       ctx.save();
       if (eff.type === 'HIT') {
-        // Fiery explosion shockwave expanding outward
+        // คลื่นกระแทกระเบิดกระจายออกด้านนอก
         const shockRadius = 10 + progress * 30;
         ctx.beginPath();
         ctx.arc(effPixel.x, effPixel.y, shockRadius, 0, Math.PI * 2);
@@ -533,16 +557,16 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       ctx.restore();
     }
 
-    // 8. Aircraft Targets
+    // 7. วาดเป้าบินเครื่องบิน (Aircraft Targets)
     for (const t of targets) {
       const tp = geoToPixel(t.lat, t.lon, width, height);
       const isSelected = t.id === selectedTargetId;
 
-      // Bearing & Range (relative to Bullseye if active, SAM base if not)
+      // แบริ่งและระยะทางเทียบกับ Bullseye หากเปิดใช้งาน หรือฐาน SAM หากปิด
       const brg = getBearingDeg(refLat, refLon, t.lat, t.lon);
       const rng = getDistanceNM(refLat, refLon, t.lat, t.lon);
 
-      // Selection reticle ring
+      // วงแหวนและกรอบสี่เหลี่ยมเมื่อเป้าหมายถูกเลือก (Selection Reticle)
       if (isSelected) {
         ctx.save();
         ctx.strokeStyle = '#38BDF8';
@@ -552,7 +576,6 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
         ctx.arc(tp.x, tp.y, 16, 0, Math.PI * 2);
         ctx.stroke();
 
-        // 4 corner ticks
         ctx.setLineDash([]);
         const tickLen = 6;
         ctx.beginPath();
@@ -568,17 +591,17 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
         ctx.restore();
       }
 
-      // Aircraft Directional Triangle Icon oriented by headingDeg
+      // วาดสัญลักษณ์เครื่องบินสามเหลี่ยมหมุนตามทิศทาง headingDeg
       ctx.save();
       ctx.translate(tp.x, tp.y);
       const headingRad = (t.headingDeg * Math.PI) / 180;
       ctx.rotate(headingRad);
 
       ctx.beginPath();
-      ctx.moveTo(0, -9); // Nose facing up (0 deg)
-      ctx.lineTo(7, 8); // Right wing
-      ctx.lineTo(0, 5); // Center tail indent
-      ctx.lineTo(-7, 8); // Left wing
+      ctx.moveTo(0, -9); // หัวเครื่องบิน
+      ctx.lineTo(7, 8); // ปีกขวา
+      ctx.lineTo(0, 5); // รอยเว้าหาง
+      ctx.lineTo(-7, 8); // ปีกซ้าย
       ctx.closePath();
 
       ctx.fillStyle = t.isEngaged ? '#F43F5E' : isSelected ? '#38BDF8' : '#EF4444';
@@ -589,29 +612,28 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
 
       ctx.restore();
 
-      // Aircraft Telemetry Label beside icon:
-      // Line 1: [Name] BBB/range (or [Name] BE BBB/range when Bullseye is active)
-      // Line 2: FLxxx  Mxx (e.g. FL250  M0.85)
-      // Line 3: SAM launcher bearing relative to aircraft (3 digits 001-360 in RED, shown only when engaged)
+      // วาดกล่องข้อความเทเลเมทรีข้างสัญลักษณ์เครื่องบิน (โปร่งแสง 45% เพื่อมองเห็นจรวดเวลาซ้อนทับ)
       ctx.save();
       const bbb = formatDegree360(brg);
       const rngFormatted = Math.round(rng).toString();
+      // บรรทัดที่ 1: ชื่อเป้าหมาย และค่า BBB/Range (ระบุ BE เมื่อเปิดใช้งาน Bullseye)
       const line1 = isBeActive ? `${t.id} BE ${bbb}/${rngFormatted}` : `${t.id} ${bbb}/${rngFormatted}`;
+      // บรรทัดที่ 2: ความสูง FL และความเร็วมัค
       const flText = formatFlightLevel(t.altitudeFt);
       const machText = `M${t.speedMach.toFixed(2)}`;
       const line2 = `${flText}  ${machText}`;
 
-      // Check if aircraft is engaged / under missile attack
+      // ตรวจสอบว่าเครื่องบินกำลังถูกล็อค/มีจรวดพุ่งเข้าหาหรือไม่
       const targetMissiles = missiles.filter(
         (m) => m.targetId === t.id && m.status === 'IN_FLIGHT'
       );
       const isUnderAttack = Boolean(t.isEngaged || targetMissiles.length > 0);
 
-      // 1. Bearing of the SAM launcher relative to the aircraft (3 digits 001-360)
+      // คำนวณทิศทางแท่นยิงเทียบจากเครื่องบิน (001-360)
       const samBrgFromPlane = getBearingDeg(t.lat, t.lon, samConfig.baseLat, samConfig.baseLon);
       const samBrgText = formatDegree360(samBrgFromPlane);
 
-      // 2. Bearing of nearest incoming missile relative to the aircraft (3 digits 001-360)
+      // คำนวณทิศทางจากจรวดลูกที่ใกล้ที่สุดเทียบจากเครื่องบิน (001-360)
       let nearestMissile: ActiveMissile | null = null;
       let minMissileDist = Infinity;
       for (const m of targetMissiles) {
@@ -628,7 +650,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
 
       const line3Combined = `${samBrgText} / ${missileBrgText}`;
 
-      // Label background box for high legibility (2 lines normally, 3 lines when engaged)
+      // คำนวณขนาดกล่องข้อความ
       ctx.font = 'bold 11px "JetBrains Mono", monospace';
       const m1 = ctx.measureText(line1).width;
       const m2 = ctx.measureText(line2).width;
@@ -638,6 +660,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       const boxX = tp.x + 12;
       const boxY = tp.y - 15;
 
+      // ลงสีพื้นหลังกล่องแบบโปร่งแสง 45% (rgba(6, 11, 18, 0.45)) เพื่อมองเห็นสิ่งที่อยู่ข้างใต้
       ctx.fillStyle = 'rgba(6, 11, 18, 0.45)';
       ctx.fillRect(boxX, boxY, boxW, boxH);
       ctx.strokeStyle = isUnderAttack ? '#F43F5E' : isSelected ? '#38BDF8' : '#334155';
@@ -647,47 +670,47 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       ctx.textAlign = 'left';
       ctx.textBaseline = 'top';
 
-      // Line 1: Name and BBB/range
+      // พิมพ์บรรทัดที่ 1: ชื่อและ BBB/Range
       ctx.fillStyle = isUnderAttack ? '#FDA4AF' : isSelected ? '#BAE6FD' : '#E2E8F0';
       ctx.fillText(line1, boxX + 6, boxY + 3);
 
-      // Line 2: FLxx and speed in knots
-      ctx.fillStyle = '#34D399'; // Emerald altitude and speed
+      // พิมพ์บรรทัดที่ 2: FLxx และความเร็ว
+      ctx.fillStyle = '#34D399';
       ctx.font = '10px "JetBrains Mono", monospace';
       ctx.fillText(line2, boxX + 6, boxY + 16);
 
-      // Line 3: Threat bearings: Launcher bearing (Orange) / Nearest missile bearing (Red)
+      // พิมพ์บรรทัดที่ 3: ทิศทางแท่นยิง (สีส้ม) / ทิศทางจรวดที่ใกล้ที่สุด (สีแดง)
       if (isUnderAttack) {
         ctx.font = 'bold 11px "JetBrains Mono", monospace';
         const startX = boxX + 6;
         const startY = boxY + 29;
 
-        // Launcher bearing (Orange)
+        // ทิศทางแท่นยิง (สีส้ม)
         ctx.fillStyle = '#FB923C';
         ctx.fillText(samBrgText, startX, startY);
         const samW = ctx.measureText(samBrgText).width;
 
-        // Separator slash (Neutral slate)
+        // เครื่องหมายคั่น / (สีเทา)
         ctx.fillStyle = '#94A3B8';
         ctx.fillText(' / ', startX + samW, startY);
         const sepW = ctx.measureText(' / ').width;
 
-        // Nearest missile bearing (Red)
+        // ทิศทางจรวดที่ใกล้ที่สุด (สีแดง)
         ctx.fillStyle = '#EF4444';
         ctx.fillText(missileBrgText, startX + samW + sepW, startY);
       }
       ctx.restore();
     }
 
-    // 9. Central SAM Site Fixed Base Icon
+    // 8. สัญลักษณ์ฐานที่ตั้งระบบ SAM กึ่งกลางแผนที่ (Fixed SAM Battery Icon)
     ctx.save();
-    // Glowing base footprint
+    // วงกลมเรืองแสงสีเขียว
     ctx.beginPath();
     ctx.arc(samPixel.x, samPixel.y, 10, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(16, 185, 129, 0.2)';
     ctx.fill();
 
-    // SAM site diamond icon
+    // ไอคอนข้าวหลามตัดของฐานยิง
     ctx.beginPath();
     ctx.moveTo(samPixel.x, samPixel.y - 7);
     ctx.lineTo(samPixel.x + 7, samPixel.y);
@@ -700,7 +723,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
-    // Center crosshair
+    // กากบาทเล็งเป้า
     ctx.beginPath();
     ctx.moveTo(samPixel.x - 12, samPixel.y);
     ctx.lineTo(samPixel.x + 12, samPixel.y);
@@ -710,37 +733,37 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // SAM Site Label
+    // ชื่อฐานยิง SAM
     ctx.fillStyle = '#10B981';
     ctx.font = 'bold 11px "Chakra Petch", sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(`${samConfig.systemName} (SAM-1)`, samPixel.x, samPixel.y + 20);
     ctx.restore();
 
-    // 10. Bullseye (B.E.) Symbol and Label (When active: small white ring)
+    // 9. สัญลักษณ์จุดอ้างอิง Bullseye (B.E.) วงแหวนสีขาวเล็กๆ เมื่อเปิดใช้งาน
     if (isBeActive && bePixel) {
       ctx.save();
 
-      // Subtle soft glow
+      // แสงฟุ้งสีขาวอ่อนๆ
       ctx.beginPath();
       ctx.arc(bePixel.x, bePixel.y, 8, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
       ctx.fill();
 
-      // Small white ring
+      // วงแหวนสีขาวขนาดเล็ก
       ctx.beginPath();
       ctx.arc(bePixel.x, bePixel.y, 5.5, 0, Math.PI * 2);
       ctx.strokeStyle = '#FFFFFF';
       ctx.lineWidth = 1.8;
       ctx.stroke();
 
-      // Tiny center dot
+      // จุดศูนย์กลางสีขาว
       ctx.beginPath();
       ctx.arc(bePixel.x, bePixel.y, 1.2, 0, Math.PI * 2);
       ctx.fillStyle = '#FFFFFF';
       ctx.fill();
 
-      // Small tactical crosshair tick marks (subtle)
+      // ขีดกากบาทเล็งเป้า
       ctx.beginPath();
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
       ctx.lineWidth = 1;
@@ -754,7 +777,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       ctx.lineTo(bePixel.x, bePixel.y + 9);
       ctx.stroke();
 
-      // Label below Bullseye symbol
+      // ป้ายข้อความ B.E. ใต้สัญลักษณ์
       ctx.fillStyle = '#FFFFFF';
       ctx.font = 'bold 10px "Chakra Petch", sans-serif';
       ctx.textAlign = 'center';
@@ -779,7 +802,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     dimensions,
   ]);
 
-  // Mouse Handlers: Cursor Brg/Range calculation, Double-click spawn, Dragging aircraft, Panning
+  // จัดการการเคลื่อนที่ของเมาส์บนจอเรดาร์: คำนวณแบริ่ง/ระยะทาง และการลากย้าย
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -787,7 +810,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
-    // Calculate real-time Bearing & Range relative to reference (BE if active, SAM base if not)
+    // คำนวณพิกัดภูมิศาสตร์ แบริ่ง และระยะทาง ณ ตำแหน่งเคอร์เซอร์
     const geoPos = pixelToGeo(mouseX, mouseY, rect.width, rect.height);
     const brg = getBearingDeg(refLat, refLon, geoPos.lat, geoPos.lon);
     const rngNM = getDistanceNM(refLat, refLon, geoPos.lat, geoPos.lon);
@@ -802,13 +825,13 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       rangeKm: rngKm,
     });
 
-    // Handle dragging an aircraft
+    // หากกำลังลากเครื่องบินอยู่ ให้ปรับพิกัดตามเมาส์
     if (draggedTargetIdRef.current) {
       onUpdateTargetPosition(draggedTargetIdRef.current, geoPos.lat, geoPos.lon);
       return;
     }
 
-    // Handle map panning
+    // หากกำลังลากเลื่อนแผนที่ (Pan Map)
     if (isPanningRef.current) {
       const dx = mouseX - panStartRef.current.x;
       const dy = mouseY - panStartRef.current.y;
@@ -824,6 +847,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     }
   };
 
+  // จัดการเมื่อกดปุ่มเมาส์ลง (Mouse Down)
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -831,7 +855,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
-    // Check if clicked directly on an aircraft target (hit test within 20px)
+    // ตรวจสอบว่าคลิกโดนเครื่องบินลำใดหรือไม่ (ระยะ 20px)
     let clickedTarget: AircraftTarget | null = null;
     for (const t of targets) {
       const tp = geoToPixel(t.lat, t.lon, rect.width, rect.height);
@@ -846,22 +870,21 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       onSelectTarget(clickedTarget.id);
       draggedTargetIdRef.current = clickedTarget.id;
     } else {
-      // Start map pan
       isPanningRef.current = true;
       panStartRef.current = { x: mouseX, y: mouseY };
     }
   };
 
+  // จัดการเมื่อปล่อยปุ่มเมาส์ (Mouse Up)
   const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    // If dragging an aircraft was active, check if dragged outside map bounds
     if (draggedTargetIdRef.current) {
       const canvas = canvasRef.current;
       if (canvas) {
         const rect = canvas.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
+        // หากลากเครื่องบินออกนอกขอบจอเรดาร์ ให้ลบเป้าหมายทิ้ง
         if (mouseX < 0 || mouseX > rect.width || mouseY < 0 || mouseY > rect.height) {
-          // Dragged outside bounds -> delete target
           onDeleteTarget(draggedTargetIdRef.current);
         }
       }
@@ -870,13 +893,14 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     isPanningRef.current = false;
   };
 
+  // จัดการเมื่อเมาส์เลื่อนออกนอกจอเรดาร์
   const handleMouseLeave = () => {
     setCursorInfo((prev) => ({ ...prev, visible: false }));
     isPanningRef.current = false;
     draggedTargetIdRef.current = null;
   };
 
-  // Double-Click to Spawn new Aircraft Target
+  // จัดการดับเบิลคลิกเพื่อสร้างเป้าบินใหม่ ณ ตำแหน่งเคอร์เซอร์
   const handleDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -888,20 +912,20 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     onSpawnTarget(geo.lat, geo.lon);
   };
 
-  // Wheel zoom
+  // จัดการหมุนล้อเมาส์เพื่อซูมเข้า/ออก (Mouse Wheel Zoom)
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
     setZoomScale((prev) => Math.min(Math.max(prev * zoomFactor, 0.3), 8.0));
   };
 
-  // Touch Handlers for iPad & iPhone Gestures (1-finger pan/drag, 2-finger pinch-zoom, double-tap spawn)
+  // สัมผัสหน้าจอบน iPad / iPhone: เริ่มต้นสัมผัส
   const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
 
-    // Two-finger Pinch to Zoom Start
+    // กรณีแตะ 2 นิ้วพร้อมกันเพื่อ Pinch Zoom
     if (e.touches.length === 2) {
       draggedTargetIdRef.current = null;
       isPanningRef.current = false;
@@ -919,7 +943,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       return;
     }
 
-    // Single-finger touch
+    // กรณีแตะ 1 นิ้วเพื่อเลือก ลาก หรือเลื่อนแผนที่
     if (e.touches.length === 1) {
       pinchStartDistRef.current = null;
       touchMovedRef.current = false;
@@ -930,7 +954,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
 
       panStartRef.current = { x: touchX, y: touchY };
 
-      // Touch hit test on aircraft targets (generous 30px touch hit radius)
+      // ตรวจสอบว่าแตะโดนเครื่องบินหรือไม่ (ระยะ 30px สำหรับนิ้วสัมผัส)
       let clickedTarget: AircraftTarget | null = null;
       for (const t of targets) {
         const tp = geoToPixel(t.lat, t.lon, rect.width, rect.height);
@@ -949,7 +973,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
         isPanningRef.current = true;
       }
 
-      // Update cursor / touch bearing and range HUD
+      // อัปเดต HUD ข้อมูลเคอร์เซอร์
       const geoPos = pixelToGeo(touchX, touchY, rect.width, rect.height);
       const brg = getBearingDeg(refLat, refLon, geoPos.lat, geoPos.lon);
       const rngNM = getDistanceNM(refLat, refLon, geoPos.lat, geoPos.lon);
@@ -964,12 +988,13 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     }
   };
 
+  // การเลื่อนนิ้วสัมผัส (Touch Move)
   const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
 
-    // Two-finger Pinch to Zoom & Pan
+    // สัมผัส 2 นิ้ว: Pinch Zoom & Pan
     if (e.touches.length === 2 && pinchStartDistRef.current !== null) {
       const t0 = e.touches[0];
       const t1 = e.touches[1];
@@ -998,7 +1023,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       return;
     }
 
-    // Single-finger Move: Drag Target or Pan Map
+    // สัมผัส 1 นิ้ว: ลากย้ายเครื่องบิน หรือเลื่อนแผนที่
     if (e.touches.length === 1) {
       const touch = e.touches[0];
       const touchX = touch.clientX - rect.left;
@@ -1023,13 +1048,13 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
         rangeKm: rngNM * 1.852,
       });
 
-      // 1. Dragging Target
+      // ลากเครื่องบิน
       if (draggedTargetIdRef.current) {
         onUpdateTargetPosition(draggedTargetIdRef.current, geoPos.lat, geoPos.lon);
         return;
       }
 
-      // 2. Panning Map
+      // เลื่อนแผนที่
       if (isPanningRef.current) {
         panStartRef.current = { x: touchX, y: touchY };
         const maxDim = Math.min(rect.width, rect.height) * 0.44;
@@ -1043,12 +1068,13 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     }
   };
 
+  // เมื่อยกนิ้วออกจากจอสัมผัส (Touch End)
   const handleTouchEnd = (e: React.TouchEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
 
-    // Check if dragged aircraft outside canvas bounds
+    // หากลากเครื่องบินออกนอกขอบจอสัมผัส ให้ลบเป้าหมายทิ้ง
     if (draggedTargetIdRef.current && e.changedTouches.length > 0) {
       const touch = e.changedTouches[0];
       const touchX = touch.clientX - rect.left;
@@ -1058,7 +1084,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       }
     }
 
-    // Single Tap / Double Tap detection
+    // ตรวจจับการแตะครั้งเดียวหรือแตะสองครั้งติดกัน (Double Tap Spawn)
     if (!touchMovedRef.current && !draggedTargetIdRef.current && e.changedTouches.length === 1) {
       const touch = e.changedTouches[0];
       const touchX = touch.clientX - rect.left;
@@ -1067,14 +1093,13 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       const now = Date.now();
       const timeSinceLastTap = now - lastTouchTapTimeRef.current;
       if (timeSinceLastTap < 350) {
-        // Double Tap -> spawn target at touch location
+        // แตะ 2 ครั้งติดกัน -> สร้างเป้าบินใหม่ ณ ตำแหน่งสัมผัส
         const geo = pixelToGeo(touchX, touchY, rect.width, rect.height);
         onSpawnTarget(geo.lat, geo.lon);
         lastTouchTapTimeRef.current = 0;
       } else {
         lastTouchTapTimeRef.current = now;
 
-        // Check if single tap touched an aircraft
         let hitTarget = false;
         for (const t of targets) {
           const tp = geoToPixel(t.lat, t.lon, rect.width, rect.height);
@@ -1089,14 +1114,13 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
       }
     }
 
-    // Reset interaction states when all fingers leave
+    // รีเซ็ตสถานะเมื่อยกนิ้วทั้งหมด
     if (e.touches.length === 0) {
       isPanningRef.current = false;
       draggedTargetIdRef.current = null;
       pinchStartDistRef.current = null;
       setCursorInfo((prev) => ({ ...prev, visible: false }));
     } else if (e.touches.length === 1) {
-      // Transition from pinch back to 1-finger pan
       pinchStartDistRef.current = null;
       const t = e.touches[0];
       panStartRef.current = {
@@ -1106,6 +1130,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
     }
   };
 
+  // เมื่อการสัมผัสถูกยกเลิก (Touch Cancel)
   const handleTouchCancel = () => {
     isPanningRef.current = false;
     draggedTargetIdRef.current = null;
@@ -1115,6 +1140,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
 
   return (
     <div ref={containerRef} className="relative w-full h-full select-none overflow-hidden bg-[#06090e] touch-none">
+      {/* ผืนผ้าใบ Canvas จอเรดาร์ */}
       <canvas
         ref={canvasRef}
         className="w-full h-full block cursor-crosshair touch-none"
@@ -1130,7 +1156,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
         onTouchCancel={handleTouchCancel}
       />
 
-      {/* Dynamic Cursor Floating Bearing / Range HUD at bottom-right corner of cursor */}
+      {/* ป้าย HUD ลอยตามตำแหน่งเคอร์เซอร์ แสดงแบริ่งและระยะทาง */}
       {cursorInfo.visible && (
         <div
           className="pointer-events-none fixed z-50 transform translate-x-3 translate-y-3 px-2 py-1 rounded bg-slate-950/90 border border-cyan-500/50 shadow-lg text-[11px] font-telemetry text-cyan-300"
@@ -1150,7 +1176,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
         </div>
       )}
 
-      {/* On-Map Floating C2 Controls (Top-Right / Left) */}
+      {/* แถบปุ่มควบคุมแผนที่ ซูมเข้า/ออก และจัดกึ่งกลาง (Top-Right) */}
       <div className="absolute top-3 right-3 flex items-center gap-1.5 p-1 rounded-md bg-slate-950/80 border border-slate-800 backdrop-blur-xs">
         <button
           onClick={() => setZoomScale((z) => Math.min(z * 1.25, 8.0))}
@@ -1177,6 +1203,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
         </button>
       </div>
 
+      {/* ปุ่มสลับเปิด/ปิดเลเยอร์แผนที่ KML (Top-Left) */}
       {tacticalOverlays.length > 0 && (
         <div className="absolute top-3 left-3 flex items-center gap-2 p-1 rounded-md bg-slate-950/80 border border-slate-800 backdrop-blur-xs text-xs font-military">
           <button
@@ -1192,7 +1219,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
         </div>
       )}
 
-      {/* Tactical Canvas Helper Footer */}
+      {/* แถบคำแนะนำการใช้งานและระดับการซูม (Bottom-Left) */}
       <div className="absolute bottom-2 left-3 flex items-center gap-2.5 text-[11px] font-military text-slate-400 bg-slate-950/80 px-2.5 py-1 rounded border border-slate-900 pointer-events-none backdrop-blur-xs">
         <span className="hidden sm:inline">DOUBLE-CLICK / DOUBLE-TAP TO SPAWN</span>
         <span className="sm:hidden">DOUBLE-TAP SPAWN</span>
@@ -1203,7 +1230,7 @@ export const RadarScope: React.FC<RadarScopeProps> = ({
         <span>ZOOM: {Math.round(zoomScale * 100)}%</span>
       </div>
 
-      {/* Bullseye Active Tactical Status Indicator (Bottom-Right) */}
+      {/* ป้ายแสดงสถานะเมื่อเปิดใช้งาน Bullseye (B.E. Active) ที่มุมล่างขวา */}
       {isBeActive && (
         <div className="absolute bottom-2.5 right-3 flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-950/90 border border-amber-500/80 shadow-lg text-xs font-telemetry font-bold text-amber-400 select-none z-10 backdrop-blur-xs">
           <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
